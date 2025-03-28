@@ -1,0 +1,24 @@
+# Unity 自动生成的文件
+Library/
+Logs/
+Temp/
+Build/
+UserSettings/
+
+# VSCode / Rider / Visual Studio
+.vscode/
+.idea/
+*.csproj
+*.sln
+
+# 操作系统临时文件
+.DS_Store
+Thumbs.db
+
+# Package Manager 自动生成的缓存
+Packages/package-cache/
+
+# 本地存档 / 运行时数据
+SaveData/
+*.sav
+Screenshots/
