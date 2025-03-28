@@ -1,0 +1,45 @@
+2024-05-28 20:55:43,238 - URBasic_realTimeClientEvent - ERROR - SendProgram: Program Stopped but not finiched!!!
+2024-05-30 20:42:16,105 - URBasic_realTimeClientEvent - ERROR - SendProgram: Program Stopped but not finiched!!!
+2024-05-30 20:54:46,152 - URBasic_realTimeClientEvent - ERROR - SendProgram: Program Stopped but not finiched!!!
+2024-05-30 21:16:05,615 - URBasic_dashboardEvent - ERROR - Dashboard server interface stopped running
+2024-05-30 21:16:05,617 - URBasic_rtdeEvent - ERROR - RTDE interface stopped running
+2024-05-31 19:25:45,493 - URBasic_rtdeEvent - ERROR - Lost some RTDE at 2994.7599999999998 - 23.999999999887223 milliseconds since last package
+2024-05-31 19:25:53,497 - URBasic_rtdeEvent - ERROR - Lost some RTDE at 3002.7599999999998 - 16.000000000076398 milliseconds since last package
+2024-05-31 21:11:39,559 - URBasic_rtdeEvent - ERROR - RTDE interface stopped running
+2024-05-31 21:11:39,559 - URBasic_dashboardEvent - ERROR - Dashboard server interface stopped running
+2024-05-31 21:11:41,580 - URBasic_dashboardEvent - ERROR - Dashboard connecting
+2024-05-31 21:11:43,586 - URBasic_dashboardEvent - ERROR - Dashboard connecting
+2024-05-31 21:11:45,592 - URBasic_dashboardEvent - ERROR - Dashboard connecting
+2024-05-31 21:11:47,603 - URBasic_dashboardEvent - ERROR - Dashboard connecting
+2024-05-31 21:11:49,608 - URBasic_dashboardEvent - ERROR - Dashboard connecting
+2024-05-31 21:11:51,615 - URBasic_dashboardEvent - ERROR - Dashboard connecting
+2024-05-31 21:11:53,626 - URBasic_dashboardEvent - ERROR - Dashboard connecting
+2024-05-31 21:11:55,634 - URBasic_dashboardEvent - ERROR - Dashboard connecting
+2024-05-31 21:11:57,637 - URBasic_dashboardEvent - ERROR - Dashboard connecting
+2024-05-31 21:11:59,642 - URBasic_dashboardEvent - ERROR - Dashboard connecting
+2024-05-31 21:12:01,650 - URBasic_dashboardEvent - ERROR - Dashboard connecting
+2024-05-31 21:12:03,656 - URBasic_dashboardEvent - ERROR - Dashboard connecting
+2024-05-31 21:12:05,674 - URBasic_dashboardEvent - ERROR - Dashboard connecting
+2024-05-31 21:12:07,684 - URBasic_dashboardEvent - ERROR - Dashboard connecting
+2024-05-31 21:12:09,702 - URBasic_dashboardEvent - ERROR - Dashboard connecting
+2024-05-31 21:12:11,714 - URBasic_dashboardEvent - ERROR - Dashboard connecting
+2024-05-31 21:12:13,721 - URBasic_dashboardEvent - ERROR - Dashboard connecting
+2024-05-31 21:12:15,728 - URBasic_dashboardEvent - ERROR - Dashboard connecting
+2024-05-31 21:12:17,734 - URBasic_dashboardEvent - ERROR - Dashboard connecting
+2024-05-31 21:12:19,748 - URBasic_dashboardEvent - ERROR - Dashboard connecting
+2024-05-31 21:12:21,755 - URBasic_dashboardEvent - ERROR - Dashboard connecting
+2024-05-31 21:12:23,765 - URBasic_dashboardEvent - ERROR - Dashboard connecting
+2024-05-31 21:12:25,771 - URBasic_dashboardEvent - ERROR - Dashboard connecting
+2024-05-31 21:12:27,783 - URBasic_dashboardEvent - ERROR - Dashboard connecting
+2024-05-31 21:12:29,794 - URBasic_dashboardEvent - ERROR - Dashboard connecting
+2024-05-31 21:12:31,807 - URBasic_dashboardEvent - ERROR - Dashboard connecting
+2024-05-31 21:12:33,816 - URBasic_dashboardEvent - ERROR - Dashboard connecting
+2024-05-31 21:12:35,823 - URBasic_dashboardEvent - ERROR - Dashboard connecting
+2024-05-31 21:12:37,840 - URBasic_dashboardEvent - ERROR - Dashboard connecting
+2024-05-31 21:12:39,858 - URBasic_dashboardEvent - ERROR - Dashboard connecting
+2024-05-31 21:12:39,859 - URBasic_dashboardEvent - WARNING - Dashboard server reconnection failed!
+2024-08-07 21:18:10,000 - URBasic_realTimeClientEvent - ERROR - SendProgram: Program Stopped but not finiched!!!
+2024-08-07 21:19:49,603 - URBasic_realTimeClientEvent - ERROR - SendProgram: Safety Stop
+2024-08-07 21:20:23,349 - URBasic_realTimeClientEvent - ERROR - SendProgram: Program Stopped but not finiched!!!
+2024-08-07 21:21:04,307 - URBasic_realTimeClientEvent - ERROR - SendProgram: Program Stopped but not finiched!!!
+2024-08-07 21:41:28,979 - URBasic_realTimeClientEvent - ERROR - SendProgram: Program Stopped but not finiched!!!
