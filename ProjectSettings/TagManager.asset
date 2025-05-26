@@ -47,6 +47,9 @@ TagManager:
   - name: MainSprites
     uniqueID: 3793699881
     locked: 0
+  - name: FrontWindow
+    uniqueID: 706010141
+    locked: 0
   - name: UI
     uniqueID: 1574298859
     locked: 0

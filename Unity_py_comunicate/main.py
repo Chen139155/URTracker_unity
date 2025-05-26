@@ -22,6 +22,7 @@ from Dynamic_Learning import DL_cc_detect as Dcd
 from PipeCommunication_0326 import PipeCommunication
 import queue
 import multiprocessing
+import zmq
 
 # pip install tobii_research as tr
 import tobii_research as tr
@@ -72,6 +73,22 @@ def pos_r2g(r_r, r_g, pos_cg, pos_cr, pos_r):
     pos_g[0] = k_x * pos_r[0] + b[0]
     pos_g[1] = k_y * pos_r[1] + b[1]
     return pos_g
+
+def start_detect_daemon(self):
+        """启动守护进程"""
+        from state_detect import state_detect_worker
+        self.state_daemon = multiprocessing.Process(
+            target=state_detect_worker,
+            args=(self.task_queue, self.result_q),
+            daemon=True
+        )
+        self.state_daemon.start()
+
+def stop_detect_daemon(self):
+    """停止守护进程"""
+    if self.state_daemon and self.state_daemon.is_alive():
+        self.task_queue.put((None, "STOP"))  # 发送终止信号
+        self.state_daemon.join(timeout=5)
 
 if __name__ == "__main__":
     # URTrackerConfig = Config()
@@ -124,7 +141,8 @@ if __name__ == "__main__":
     result_q = multiprocessing.Queue(maxsize=1)
     task_queue = multiprocessing.Queue(maxsize=1)
     state_daemon = None
-
+    if not state_daemon or not state_daemon.is_alive():
+        start_detect_daemon()
     # 定义数据 Dataframe
     data_columns = ['time', 'target_x', 'target_y', 'cursor_x', 'cursor_y', 'Hex_x', 'Hex_y', 'Hex_z','force_norm', 'linear_x', 'linear_y', 'linear_z',
                     'pose_x', 'pose_y', 'pose_z', 'pose_rx', 'pose_ry', 'pose_rz','Gaze_x','Gaze_y', 'stage_id', 'congnitive_flag', 'motor_flag', 'I_FB', 'I_ASST']
@@ -190,8 +208,8 @@ if __name__ == "__main__":
                                         Data_r2g['linear_y'], Data_r2g['linear_z'],
                                         Data_r2g['pose_x'],Data_r2g['pose_y'],Data_r2g['pose_z'],
                                         Data_r2g['pose_rx'],Data_r2g['pose_ry'],
-                                        # Data_r2g['pose_rz'], pos_gaze[0], pos_gaze[1], stage_id, congnitive_identify_flag, motor_identify_flag, I_FB, I_ASST]
-                                        Data_r2g['pose_rz'], pos_gaze[0], pos_gaze[1]]
+                                        Data_r2g['pose_rz'], pos_gaze[0], pos_gaze[1], stage_id, congnitive_identify_flag, motor_identify_flag, I_FB, I_ASST]
+                                        # Data_r2g['pose_rz'], pos_gaze[0], pos_gaze[1]]
                     
             
 
