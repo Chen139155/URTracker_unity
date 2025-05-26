@@ -53,10 +53,11 @@ public class MCTSParamsReceiver : MonoBehaviour
 
     void Update()
     {
+        MCTSParams param;
         // 在主线程处理接收到的参数
-        if (_paramsQueue.TryDequeue(out MCTSParams params))
+        if (_paramsQueue.TryDequeue(out param))
         {
-            UpdateUnityVisualization(params);
+            UpdateUnityVisualization(param);
         }
     }
 
