@@ -23,7 +23,7 @@ public class UnityCursorReceiver : MonoBehaviour
     {
         AsyncIO.ForceDotNet.Force();
         _subSocket = new SubscriberSocket();
-        _subSocket.Connect("tcp://127.0.0.1:6001"); // 与 Python PUSH 端口一致
+        _subSocket.Connect("tcp://127.0.0.1:6001"); // 与 Python PUB 端口一致
         _subSocket.SubscribeToAnyTopic();
 
         _receiveThread = new Thread(ReceiveCursor);
@@ -75,6 +75,10 @@ public class UnityCursorReceiver : MonoBehaviour
     void OnDestroy()
     {
         _isRunning = false;
+        if (_receiveThread != null && _receiveThread.IsAlive)
+        {
+            _receiveThread.Join(100); // 等待100ms线程退出
+        }
         _subSocket?.Close();
         NetMQConfig.Cleanup();
     }

@@ -100,7 +100,7 @@ public class NamedPipeClient : MonoBehaviour
             {
                 Vector2 newCursor = new Vector2(x, y);
                 cursorQueue.Enqueue(newCursor);
-                Debug.Log($"[Unity] 接收光标坐标: {x}, {y}");
+                Debug.Log($"[Unity] 接收光标坐标: {x}, {y }");
             }
         }
     }
