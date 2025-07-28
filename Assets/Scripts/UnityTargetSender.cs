@@ -17,7 +17,7 @@ public class UnityTargetSender : MonoBehaviour
     [Header("Send Settings")]
     [Tooltip("发送间隔（秒）")]
     [SerializeField] private float _sendInterval = 0.02f; // 50Hz
-     
+
     private PushSocket _pushSocket;
     private Thread _sendThread;
     private bool _isSending = true;
@@ -29,7 +29,7 @@ public class UnityTargetSender : MonoBehaviour
     {
         AsyncIO.ForceDotNet.Force();
         _pushSocket = new PushSocket();
-        _pushSocket.Connect("tcp://127.0.0.1:6000"); // 与 Python PULL 端口一致
+        _pushSocket.Connect("tcp://127.0.0.1:6005"); // 与 Python PULL 端口一致
 
         _sendThread = new Thread(SendTargets);
         _sendThread.Start();
@@ -48,7 +48,7 @@ public class UnityTargetSender : MonoBehaviour
     void SendTargets()
     {
         var jsonBuilder = new StringBuilder(64);
-        
+
         while (_isSending)
         {
             if (_sendQueue.TryDequeue(out TargetData data))
@@ -87,4 +87,16 @@ public class UnityTargetSender : MonoBehaviour
         _pushSocket?.Close();
         NetMQConfig.Cleanup();
     }
+    void OnApplicationQuit()
+    {
+        _isSending = false;
+        if (_sendThread != null && _sendThread.IsAlive)
+        {
+            _sendThread.Join(100); // 等待100ms线程退出
+        }
+        _pushSocket?.Close();
+        NetMQConfig.Cleanup();
+        Debug.Log("UnityTargetSender 资源已清理");
+}
+
 }

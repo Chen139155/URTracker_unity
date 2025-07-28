@@ -2,6 +2,7 @@ import sys
 import torch
 import time
 import Dynamic_Learning.DL_cc_detect as Dcd
+import os
 
 # def compute_state_flag(df_detect, center, W_cog, W_mot1, W_mot2, result_queue):
 #     '''计算状态识别结果'''   
@@ -58,10 +59,14 @@ def state_detect_worker(task_queue, result_queue):
     W_cog = torch.zeros(N, n)
     W_mot1 = torch.zeros(N, n)
     W_mot2 = torch.zeros(N, n)
-
-    W_cog = torch.load(r"experiment\urtracker\0225_1147\trained_models\iden_trackball_NOM_A_current.pt")["Wb0"].cuda()
-    W_mot1 = torch.load(r"experiment\urtracker\0225_1147\trained_models\iden_trackball_NOM_M_current.pt")["Wb0"].cuda()
-    W_mot2 = torch.load(r"experiment\urtracker\0225_1147\trained_models\iden_trackball_ABN_M_current.pt")["Wb0"].cuda()
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    model_path1 = os.path.join(script_dir, 'experiment', 'urtracker', 'trained_models', 'iden_trackball_NOM_A_current.pt')
+    model_path2 = os.path.join(script_dir, 'experiment', 'urtracker', 'trained_models', 'iden_trackball_NOM_M_current.pt')
+    model_path3 = os.path.join(script_dir, 'experiment', 'urtracker', 'trained_models', 'iden_trackball_ABN_M_current.pt')
+    print(script_dir)
+    W_cog = torch.load(model_path1)["Wb0"].cuda()
+    W_mot1 = torch.load(model_path2)["Wb0"].cuda()
+    W_mot2 = torch.load(model_path3)["Wb0"].cuda()
     
     while True:
         task = task_queue.get()

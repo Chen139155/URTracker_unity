@@ -223,7 +223,9 @@ class MCTSControlThread(threading.Thread):
         self.cmd_q.put('mode{}'.format(params['assistance']))
 
     def stop(self):
+        print("正在停止 MCTS 线程...")
         self.running = False
+        self.join()  # 等待线程结束
 
 # ===== 主循环示例 =====
 if __name__ == "__main__":

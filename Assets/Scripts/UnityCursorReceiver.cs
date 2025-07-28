@@ -78,4 +78,15 @@ public class UnityCursorReceiver : MonoBehaviour
         _subSocket?.Close();
         NetMQConfig.Cleanup();
     }
+    void OnApplicationQuit()
+    {
+        _isRunning = false;
+        if (_receiveThread != null && _receiveThread.IsAlive)
+        {
+            _receiveThread.Join(100); // 等待100ms线程退出
+        }
+        _subSocket?.Close();
+        NetMQConfig.Cleanup();
+        Debug.Log("UnityCursorReceiver 资源已清理");
+    }
 }

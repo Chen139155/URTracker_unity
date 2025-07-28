@@ -1,5 +1,10 @@
 import sys
-# sys.path.append('.UR5_admittance')
+import os
+# 获取当前文件所在目录的绝对路径
+current_dir = os.path.dirname(os.path.abspath(__file__))
+# 添加完整的 URBasic 模块路径
+sys.path.append(current_dir)
+import URBasic
 import URBasic.robotModel
 import URBasic.urScriptExt
 # import test_main as Ur
@@ -9,7 +14,6 @@ import numpy as np
 import threading
 import socket
 import time
-import URBasic
 import pandas as pd
 import queue
 # import PyLocationServer as PLS
