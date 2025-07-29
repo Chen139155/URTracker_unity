@@ -105,7 +105,8 @@ if __name__ == "__main__":
     # 创建sub套接字，接收来自unity的Target信息
     target_sub_socket = context.socket(zmq.SUB)
     target_sub_socket.setsockopt(zmq.CONFLATE, 1)
-    target_sub_socket.connect("tcp://*:6005")
+    target_sub_socket.setsockopt(zmq.RCVHWM, 1)    # 设置接收高水位为1
+    target_sub_socket.bind("tcp://localhost:6005")
     # 创建pub套接字，向unity发送cursor信息
     cursor_pub_socket = context.socket(zmq.PUB)
     cursor_pub_socket.bind("tcp://*:6001")
@@ -164,7 +165,14 @@ if __name__ == "__main__":
             target_r = pos_g2r(r_r, r_g, pos_cg, pos_cr, [target["x"], target["y"]])
             g2r_q.put(target_r)
         except zmq.Again:
+            logging.warning('未接收到target')
             pass
+        except zmq.ZMQError as e:
+            logging.error(f"接收Unity数据时ZMQ错误: {e}")
+        except json.JSONDecodeError as e:
+            logging.error(f"解析Unity数据JSON失败: {e}")
+        except Exception as e:
+            logging.error(f"接收Unity数据时未知错误: {e}")
             
             
 
