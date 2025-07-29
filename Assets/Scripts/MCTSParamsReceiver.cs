@@ -1,14 +1,11 @@
 using UnityEngine;
 using NetMQ; // 需要导入NetMQ插件
 using NetMQ.Sockets;
-using System.Threading;
-using System.Collections.Concurrent;
 
 public class MCTSParamsReceiver : MonoBehaviour
 {
-    private Thread _receiverThread;
-    private bool _running = true;
-    private readonly ConcurrentQueue<MCTSParams> _paramsQueue = new ConcurrentQueue<MCTSParams>();
+    private SubscriberSocket _subSocket;
+    private bool _isInitialized = false;
     
     // 参数结构体（与Python端对应）
     public struct MCTSParams
@@ -20,44 +17,53 @@ public class MCTSParamsReceiver : MonoBehaviour
 
     void Start()
     {
-        _receiverThread = new Thread(ReceiveMessages);
-        _receiverThread.Start();
-    }
-
-    private void ReceiveMessages()
-    {
-        using (var subSocket = new SubscriberSocket())
+        try
         {
-            subSocket.Options.ReceiveHighWatermark = 1000;
-            subSocket.Connect("tcp://localhost:5557"); // 与Python端pub端口一致
-            subSocket.Subscribe("mcts_params");
-
-            while (_running)
-            {
-                if (subSocket.TryReceiveFrameString(out string topic) && 
-                    subSocket.TryReceiveFrameString(out string json))
-                {
-                    if (topic == "mcts_params")
-                    {
-                        var data = JsonUtility.FromJson<MCTSParams>(json);
-                        _paramsQueue.Enqueue(data);
-                    }
-                }
-                else
-                {
-                    Thread.Sleep(10); // 避免CPU空转
-                }
-            }
+            AsyncIO.ForceDotNet.Force();
+            _subSocket = new SubscriberSocket();
+            _subSocket.Options.ReceiveHighWatermark = 1000;
+            _subSocket.Connect("tcp://localhost:5557"); // 与Python端pub端口一致
+            _subSocket.Subscribe("mcts_params");
+            _isInitialized = true;
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError($"Socket 初始化失败: {e.Message}");
         }
     }
 
     void Update()
     {
-        MCTSParams param;
-        // 在主线程处理接收到的参数
-        if (_paramsQueue.TryDequeue(out param))
+        if (!_isInitialized) return;
+
+        // 在主线程中处理消息接收
+        ProcessMessages();
+    }
+
+    private void ProcessMessages()
+    {
+        // 处理所有可用的消息，但限制处理数量以避免帧率下降
+        int messageCount = 0;
+        const int maxMessagesPerFrame = 10;
+        
+        while (messageCount < maxMessagesPerFrame && 
+               _subSocket.TryReceiveFrameString(out string topic) && 
+               _subSocket.TryReceiveFrameString(out string json))
         {
-            UpdateUnityVisualization(param);
+            if (topic == "mcts_params")
+            {
+                try
+                {
+                    var data = JsonUtility.FromJson<MCTSParams>(json);
+                    UpdateUnityVisualization(data);
+                }
+                catch (System.Exception e)
+                {
+                    Debug.LogError($"JSON 解析错误: {e.Message}");
+                }
+            }
+            
+            messageCount++;
         }
     }
 
@@ -82,16 +88,13 @@ public class MCTSParamsReceiver : MonoBehaviour
     
     private void CleanupResources()
     {
-        // 设置停止标志
-        _running = false;
+        _isInitialized = false;
         
-        // 等待线程退出
-        if (_receiverThread != null && _receiverThread.IsAlive)
+        if (_subSocket != null)
         {
-            _receiverThread.Join(100); // 最多等待100ms
+            _subSocket.Close();
         }
         
-        // 清理NetMQ资源
         NetMQConfig.Cleanup();
         Debug.Log("MCTSParamsReceiver 资源已清理");
     }

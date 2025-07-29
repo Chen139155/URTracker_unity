@@ -2,8 +2,6 @@ using System.Collections;
 using UnityEngine;
 using NetMQ;
 using NetMQ.Sockets;
-using System.Collections.Concurrent;
-using System.Threading;
 using System.Text;
 
 public class TargetControl : MonoBehaviour
@@ -36,21 +34,24 @@ public class TargetControl : MonoBehaviour
     [SerializeField] private float _sendInterval = 0.02f; // 50Hz
 
     private PushSocket _pushSocket;
-    private Thread _sendThread;
-    private bool _isSending = true;
-    private ConcurrentQueue<TargetData> _sendQueue = new ConcurrentQueue<TargetData>();
+    private bool _isInitialized = false;
     private float _lastSendTime = 0f;
     private float secX = 4.0f, secY = 0.0f;
 
     void Start()
     {
         // 初始化网络发送
-        AsyncIO.ForceDotNet.Force();
-        _pushSocket = new PushSocket();
-        _pushSocket.Connect("tcp://127.0.0.1:6005"); // 使用新端口，避免与主目标冲突
-
-        _sendThread = new Thread(SendSecondaryPositions);
-        _sendThread.Start();
+        try
+        {
+            AsyncIO.ForceDotNet.Force();
+            _pushSocket = new PushSocket();
+            _pushSocket.Connect("tcp://127.0.0.1:6005"); // 使用新端口，避免与主目标冲突
+            _isInitialized = true;
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError($"Socket 初始化失败: {e.Message}");
+        }
 
         currentSpeed = initialSpeed;
         targetRadius = radius; // 初始目标半径
@@ -61,6 +62,7 @@ public class TargetControl : MonoBehaviour
 
     void Update()
     {
+        if (!_isInitialized) return;
         if (Input.GetKeyDown(KeyCode.Space))
         {
             TriggerRadiusChange(3f); // 在 3 秒内进行半径变化
@@ -127,13 +129,6 @@ public class TargetControl : MonoBehaviour
         radius = newRadius;
         elapsedTime = 0f;
 
-        // while (elapsedTime < duration / 5f)
-        // {
-        //     // radius = Mathf.Lerp(newRadius, startRadius, elapsedTime / (duration / 3f));
-        //     elapsedTime += Time.deltaTime;
-        //     yield return null;
-        // }
-        // elapsedTime = 0f;
 
         // 平滑过渡回原半径
         while (elapsedTime < duration / 2f)
@@ -180,41 +175,28 @@ public class TargetControl : MonoBehaviour
         }
     }
 
-    // 新增：发送副目标位置的线程方法
-    void SendSecondaryPositions()
-    {
-        var jsonBuilder = new StringBuilder(64);
-
-        while (_isSending)
-        {
-            if (_sendQueue.TryDequeue(out TargetData data))
-            {
-                jsonBuilder.Clear();
-                jsonBuilder.Append("{\"x\":")
-                           .Append(data.x.ToString("F4")).Append(",")
-                           .Append("\"y\":")
-                           .Append(data.y.ToString("F4"))
-                           .Append("}");
-
-                _pushSocket.SendFrame(jsonBuilder.ToString());
-            }
-            else
-            {
-                Thread.Sleep(1);
-            }
-        }
-    }
 
     // 新增：将副目标位置加入发送队列
     public void SendSecondaryPosition(Vector2 position)
     {
-        var data = new TargetData
-        {
-            x = position.x,
-            y = position.y
-        };
+        if (!_isInitialized) return;
 
-        _sendQueue.Enqueue(data);
+        try
+        {
+            var jsonBuilder = new StringBuilder(64);
+            jsonBuilder.Clear();
+            jsonBuilder.Append("{\"x\":")
+                       .Append(position.x.ToString("F4")).Append(",")
+                       .Append("\"y\":")
+                       .Append(position.y.ToString("F4"))
+                       .Append("}");
+
+            _pushSocket.SendFrame(jsonBuilder.ToString());
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError($"发送目标位置失败: {e.Message}");
+        }
     }
     
     void OnDestroy()
@@ -229,11 +211,7 @@ public class TargetControl : MonoBehaviour
     
     private void CleanupResources()
     {
-        _isSending = false;
-        if (_sendThread != null && _sendThread.IsAlive)
-        {
-            _sendThread.Join(100); // 等待100ms线程退出
-        }
+        _isInitialized = false;
         _pushSocket?.Close();
         NetMQConfig.Cleanup();
         Debug.Log("SecondaryTargetSender 资源已清理");
