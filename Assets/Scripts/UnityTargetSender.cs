@@ -60,7 +60,18 @@ public class UnityTargetSender : MonoBehaviour
                            .Append(data.y.ToString("F4"))
                            .Append("}");
 
-                _publisherSocket.SendFrame(jsonBuilder.ToString());  // 修改3: 使用 PublisherSocket 发送
+                string jsonData = jsonBuilder.ToString();
+                bool sendResult = _publisherSocket.TrySendFrame(jsonData);
+                
+                // 添加详细的日志记录
+                if (sendResult)
+                {
+                    Debug.Log($"发送Target坐标成功: x={data.x:F4}, y={data.y:F4}");
+                }
+                else
+                {
+                    Debug.LogWarning($"发送Target坐标超时: x={data.x:F4}, y={data.y:F4}");
+                }
             }
             else
             {
