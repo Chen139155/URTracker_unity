@@ -282,7 +282,19 @@ MonoBehaviour:
   appearInterval: 0.5
   disappearDuration: 0.5
   RChangeInterval: 5
-  _sendInterval: 0.02
+--- !u!114 &390276592
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 390276590}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 57d9c19dc25947a4ab229ae5b14ed2d5, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  cursorGameObject: {fileID: 825398551}
 --- !u!1 &519420028
 GameObject:
   m_ObjectHideFlags: 0
@@ -412,7 +424,6 @@ GameObject:
   - component: {fileID: 825398554}
   - component: {fileID: 825398553}
   - component: {fileID: 825398552}
-  - component: {fileID: 825398555}
   m_Layer: 0
   m_Name: Cursor3
   m_TagString: Untagged
@@ -505,18 +516,6 @@ Transform:
   m_Father: {fileID: 0}
   m_RootOrder: 6
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &825398555
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 825398551}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 69d9006aa3fe8624a8708f4bce5bf89e, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
 --- !u!1 &1071762190
 GameObject:
   m_ObjectHideFlags: 0

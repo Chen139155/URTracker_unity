@@ -23,35 +23,13 @@ public class TargetControl : MonoBehaviour
     private bool isRadiusChanging = false; // 是否正在改变半径
     private Coroutine radiusChangeCoroutine;
 
-    private struct TargetData
-    {
-        public float x;
-        public float y;
-    }
-
-    [Header("Send Settings")]
-    [Tooltip("发送间隔（秒）")]
-    [SerializeField] private float _sendInterval = 0.02f; // 50Hz
-
-    private PushSocket _pushSocket;
-    private bool _isInitialized = false;
-    private float _lastSendTime = 0f;
+ 
     private float secX = 4.0f, secY = 0.0f;
+    public float SecX { get { return secX; } }
+    public float SecY { get { return secY; } }
 
     void Start()
     {
-        // 初始化网络发送
-        try
-        {
-            AsyncIO.ForceDotNet.Force();
-            _pushSocket = new PushSocket();
-            _pushSocket.Connect("tcp://127.0.0.1:6005"); // 使用新端口，避免与主目标冲突
-            _isInitialized = true;
-        }
-        catch (System.Exception e)
-        {
-            Debug.LogError($"Socket 初始化失败: {e.Message}");
-        }
 
         currentSpeed = initialSpeed;
         targetRadius = radius; // 初始目标半径
@@ -62,7 +40,7 @@ public class TargetControl : MonoBehaviour
 
     void Update()
     {
-        if (!_isInitialized) return;
+
         if (Input.GetKeyDown(KeyCode.Space))
         {
             TriggerRadiusChange(3f); // 在 3 秒内进行半径变化
@@ -94,13 +72,7 @@ public class TargetControl : MonoBehaviour
             secondaryObject.transform.position = new Vector3(secX, secY, secondaryObject.transform.position.z);
         }
 
-        // 新增：按指定频率发送副目标位置
-        if (Time.time - _lastSendTime >= _sendInterval && secondaryObject != null)
-        {
-            Vector2 secondaryPos = new Vector2(secX, secY);
-            SendSecondaryPosition(secondaryPos);
-            _lastSendTime = Time.time;
-        }
+
     }
 
     public void TriggerRadiusChange(float T)
@@ -174,46 +146,7 @@ public class TargetControl : MonoBehaviour
             TriggerRadiusChange(3f); // 保持3秒的过渡时间
         }
     }
-
-
-    // 新增：将副目标位置加入发送队列
-    public void SendSecondaryPosition(Vector2 position)
-    {
-        if (!_isInitialized) return;
-
-        try
-        {
-            var jsonBuilder = new StringBuilder(64);
-            jsonBuilder.Clear();
-            jsonBuilder.Append("{\"x\":")
-                       .Append(position.x.ToString("F4")).Append(",")
-                       .Append("\"y\":")
-                       .Append(position.y.ToString("F4"))
-                       .Append("}");
-
-            _pushSocket.SendFrame(jsonBuilder.ToString());
-        }
-        catch (System.Exception e)
-        {
-            Debug.LogError($"发送目标位置失败: {e.Message}");
-        }
-    }
-    
-    void OnDestroy()
-    {
-        CleanupResources();
-    }
-    
-    void OnApplicationQuit()
-    {
-        CleanupResources();
-    }
-    
-    private void CleanupResources()
-    {
-        _isInitialized = false;
-        _pushSocket?.Close();
-        NetMQConfig.Cleanup();
-        Debug.Log("SecondaryTargetSender 资源已清理");
-    }
 }
+
+   
+    

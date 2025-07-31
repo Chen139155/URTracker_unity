@@ -23,6 +23,7 @@ public class UnityCursorReceiver : MonoBehaviour
             _subSocket = new SubscriberSocket();
             _subSocket.Connect("tcp://127.0.0.1:6001"); // 与 Python PUB 端口一致
             _subSocket.SubscribeToAnyTopic();
+            _subSocket.Options.ReceiveHighWatermark = 1;  // 限制接收队列
             _isInitialized = true;
         }
         catch (System.Exception e)
@@ -41,22 +42,23 @@ public class UnityCursorReceiver : MonoBehaviour
 
     void ProcessMessages()
     {
-        // 处理所有可用的消息，但限制处理数量以避免帧率下降
-        int messageCount = 0;
-        const int maxMessagesPerFrame = 10;
+        string latestMessage = null;
         
-        while (messageCount < maxMessagesPerFrame && _subSocket.TryReceiveFrameString(out string json))
+        // 接收所有可用消息，只保留最新的
+        while (_subSocket.TryReceiveFrameString(out string json))
+        {
+            latestMessage = json;
+        }
+        
+        // 只处理最新的消息
+        if (!string.IsNullOrEmpty(latestMessage))
         {
             try
             {
-                var data = JsonConvert.DeserializeObject<CursorData>(json);
+                var data = JsonConvert.DeserializeObject<CursorData>(latestMessage);
                 if (data != null)
                 {
-                    Vector3 pos = new Vector3(
-                        data.x,
-                        data.y,
-                        0
-                    );
+                    Vector3 pos = new Vector3(data.x, data.y, 0);
                     UpdateCursorVisual(pos);
                 }
             }
@@ -64,8 +66,6 @@ public class UnityCursorReceiver : MonoBehaviour
             {
                 Debug.LogError($"JSON 解析错误: {e.Message}");
             }
-            
-            messageCount++;
         }
     }
 

@@ -107,9 +107,13 @@ if __name__ == "__main__":
     target_sub_socket.setsockopt(zmq.CONFLATE, 1)
     target_sub_socket.setsockopt(zmq.RCVHWM, 1)    # 设置接收高水位为1
     target_sub_socket.bind("tcp://localhost:6005")
+    target_sub_socket.setsockopt_string(zmq.SUBSCRIBE, "")
     # 创建pub套接字，向unity发送cursor信息
     cursor_pub_socket = context.socket(zmq.PUB)
     cursor_pub_socket.bind("tcp://*:6001")
+    # 添加发送端配置
+    cursor_pub_socket.setsockopt(zmq.SNDHWM, 1)  # 设置发送高水位为1
+    cursor_pub_socket.setsockopt(zmq.CONFLATE, 1)  # 只保留最新消息
     
     # 初始化UR5控制器
     g2r_q, r2g_q, cmd_q = queue.Queue(maxsize=1), queue.Queue(maxsize=1), queue.Queue(maxsize=1)
@@ -135,11 +139,24 @@ if __name__ == "__main__":
 
     # mcts_thread = MCTSControlThread(mcts_sub, cmd_q, mcts_pub_socket)
     # mcts_thread.start()
-    
 
+    # 添加循环频率控制
+    target_frequency = 50  # 50Hz
+    target_period = 1.0 / target_frequency  # 0.02秒
+    last_loop_time = time.time()
 
-    
     while True:
+        # 控制循环频率
+        current_time = time.time()
+        elapsed_time = current_time - last_loop_time
+        
+        if elapsed_time < target_period:
+            # 如果还没到时间，短暂休眠
+            sleep_time = target_period - elapsed_time
+            time.sleep(sleep_time)
+            current_time = time.time()  # 更新时间
+        
+        last_loop_time = current_time
         # 获取眼动仪数据
         if latest_gaze_data is not None:
             left_gaze = latest_gaze_data['left_gaze_point_on_display_area']
@@ -160,13 +177,14 @@ if __name__ == "__main__":
         # 接收来自Unity的数据
         ## target
         try:
-            target = target_sub_socket.recv_json(flags=zmq.NOBLOCK)
+            target_s = target_sub_socket.recv_string(flags=zmq.NOBLOCK)
+            target = json.loads(target_s)
             logging.debug('接收到 target: %f, %f',target["x"], target["y"])
             target_r = pos_g2r(r_r, r_g, pos_cg, pos_cr, [target["x"], target["y"]])
             g2r_q.put(target_r)
         except zmq.Again:
             logging.warning('未接收到target')
-            pass
+            time.sleep(0.001)  # 1ms
         except zmq.ZMQError as e:
             logging.error(f"接收Unity数据时ZMQ错误: {e}")
         except json.JSONDecodeError as e:
