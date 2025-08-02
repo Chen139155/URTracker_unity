@@ -25,6 +25,7 @@ from URTracker_mcts import MCTSControlThread
 import traceback
 import queue
 import logging
+from bandpass_filter import robust_bandpass_filter
 
 
 latest_gaze_data = None
@@ -52,7 +53,56 @@ def setup_logger(debug=False):
         format='[%(asctime)s] %(levelname)s: %(message)s',
         datefmt='%H:%M:%S'
     )
-
+def calculate_deviations(data_queue, result_queue):
+    """
+    计算轨迹偏差的线程函数
+    每0.5秒计算过去1秒窗口内的L1偏差
+    """
+    while True:
+        try:
+            # 从队列获取数据
+            recent_data = None
+            try:
+                # 非阻塞获取最新的数据
+                while True:
+                    recent_data = data_queue.get_nowait()
+            except queue.Empty:
+                pass
+            
+            # 如果有数据则进行计算
+            if recent_data and len(recent_data) >= 50:  # 确保有足够的数据点
+                # 转换为numpy数组便于计算
+                target_x = np.array([row["target_x"] for row in recent_data])
+                target_y = np.array([row["target_y"] for row in recent_data])
+                cursor_x = np.array([row["cursor_x"] for row in recent_data])
+                cursor_y = np.array([row["cursor_y"] for row in recent_data])
+                gaze_x = np.array([row["Gaze_x"] for row in recent_data])
+                gaze_y = np.array([row["Gaze_y"] for row in recent_data])
+                filtered_cursor_x = robust_bandpass_filter(cursor_x, 0.1, 10.0, 50.0, method='mirror')
+                filtered_cursor_y = robust_bandpass_filter(cursor_y, 0.1, 10.0, 50.0, method='mirror')
+                filtered_gaze_x = robust_bandpass_filter(gaze_x, 0.1, 10.0, 50.0, method='mirror')
+                filtered_gaze_y = robust_bandpass_filter(gaze_y, 0.1, 10.0, 50.0, method='mirror')
+                
+                # 计算L1偏差
+                # 机器人轨迹与目标轨迹的偏差
+                e_m = np.mean(np.abs(target_x - filtered_cursor_x) + np.abs(target_y - filtered_cursor_y))
+                
+                # 眼动轨迹与目标轨迹的偏差
+                e_c = np.mean(np.abs(target_x - filtered_gaze_x) + np.abs(target_y - filtered_gaze_y))
+                
+                # 将结果放入队列
+                result_queue.put({ 
+                    'e_m': e_m,
+                    'e_c': e_c,
+                    'timestamp': time.time()
+                })
+                
+            # 每0.5秒计算一次
+            time.sleep(0.2)
+            
+        except Exception as e:
+            logging.error(f"计算偏差时出错: {e}")
+            time.sleep(0.5)
 
 if __name__ == "__main__":
     setup_logger(debug=True)
@@ -81,6 +131,13 @@ if __name__ == "__main__":
 
     # 数据窗口
     df_window = []
+    # 创建队列用于识别线程间通信
+    data_queue = queue.Queue(maxsize=1)  # 只保留最新的数据副本
+    deviation_result_queue = queue.Queue(maxsize=1)
+
+    # 识别参数
+    tau_cog = 0.01
+    tau_mot = 0.008
 
     
     ''' 启动tobii '''
@@ -120,6 +177,10 @@ if __name__ == "__main__":
     ur5 = Admittance_2022()
     ur5_thread = threading.Thread(target=ur5.run_test, args=(g2r_q, r2g_q, cmd_q), daemon=True)
     ur5_thread.start()
+
+    # 启动偏差计算线程
+    deviation_thread = threading.Thread(target=calculate_deviations, args=(data_queue, deviation_result_queue), daemon=True)
+    deviation_thread.start()
     
     # # 启动状态识别子进程
     # task_q, result_q = multiprocessing.Queue(), multiprocessing.Queue()
@@ -144,6 +205,8 @@ if __name__ == "__main__":
     target_frequency = 50  # 50Hz
     target_period = 1.0 / target_frequency  # 0.02秒
     last_loop_time = time.time()
+    # 用于控制数据发送频率的计数器
+    data_send_counter = 0
 
     while True:
         # 控制循环频率
@@ -191,6 +254,38 @@ if __name__ == "__main__":
             logging.error(f"解析Unity数据JSON失败: {e}")
         except Exception as e:
             logging.error(f"接收Unity数据时未知错误: {e}")
+
+        # 每10个循环发送一次数据副本给计算线程（约每0.2秒）
+        data_send_counter += 1
+        if data_send_counter >= 10:
+            # 只发送最近50个点的数据
+            if len(df_window) >= 50:
+                try:
+                    # 发送最近50个点的数据，避免阻塞
+                    data_queue.put_nowait(df_window[-50:])
+                except queue.Full:
+                    pass  # 队列满时忽略
+            data_send_counter = 0
+        
+        # 检查是否有新的偏差计算结果
+        try:
+            while not deviation_result_queue.empty():
+                result = deviation_result_queue.get_nowait()
+                e_m = result['e_m']
+                e_c = result['e_c']
+                logging.info(f"更新偏差: e_m={e_m:.4f}, e_c={e_c:.4f}")
+                if e_c < tau_cog and e_m < tau_mot:
+                    state_flag = 0  #nAnM
+                elif e_c < tau_cog and e_m >= tau_mot:
+                    state_flag = 1  #nAaM
+                elif e_c >= tau_cog and e_m < tau_mot:
+                    state_flag = 2  #aAnM
+                else:
+                    state_flag = 3  #aAaM
+        except queue.Empty:
+            pass
+        except Exception as e:
+            logging.error(f"获取偏差结果时出错: {e}")
             
             
 
@@ -208,6 +303,8 @@ if __name__ == "__main__":
             "I_FB": I_FB, "I_ASST": I_ASST
         }
         df_window.append(row)
+
+
 
         ''' 输出数据 '''
         # 向Unity发送cursor数据

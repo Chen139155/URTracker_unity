@@ -34,8 +34,7 @@ def pos_r2g(r_r, r_g, pos_cg, pos_cr, pos_r):
     return [k_x * pos_r[0] + b[0], k_y * pos_r[1] + b[1]]
 
 def gaze_data_callback(gaze_data):
-    '''更新并打印最新的gazedata'''
-    # Print gaze points of left and right eye
+    '''更新最新的gazedata'''
     global latest_gaze_data
     latest_gaze_data = gaze_data
 
@@ -57,7 +56,6 @@ if __name__ == "__main__":
     ur5 = Admittance_2022()
     ur5_thread = threading.Thread(target=ur5.run_test, args=(g2r_q, r2g_q, cmd_q), daemon=True)
     ur5_thread.start()
-    # threading.Thread(target=ur5.run_test, args=(g2r_q, r2g_q, cmd_q), daemon=True).start()
 
     # 启动状态识别子进程
     task_q, result_q = multiprocessing.Queue(), multiprocessing.Queue()
