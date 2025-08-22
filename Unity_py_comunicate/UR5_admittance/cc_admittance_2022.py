@@ -144,19 +144,31 @@ class Admittance:
             
             # 处理命令队列
             if not command_q.empty():
-                self.event_flag_ = command_q.get()
-                print('command_q: ',self.event_flag_)
-                if self.event_flag_ == 'quit':
-                    self.runing = False
-                    sys.exit() #直接退出可能出问题，记得修改
-                elif self.event_flag_ == 'mode1':
-                    self.update_mode(1)
-                elif self.event_flag_ == 'mode2':
-                    self.update_mode(2)
-                elif self.event_flag_ == 'mode3':
-                    self.update_mode(3)
-                elif self.event_flag_ == 'stop':
-                    continue
+                command = command_q.get()
+                print('command_q: ', command)
+                # 处理字符串命令
+                if isinstance(command, str):
+                    self.event_flag_ = command
+                    if self.event_flag_ == 'quit':
+                        self.runing = False
+                        break
+                    elif self.event_flag_ == 'mode1':
+                        self.update_mode(1)
+                    elif self.event_flag_ == 'mode2':
+                        self.update_mode(2)
+                    elif self.event_flag_ == 'mode3':
+                        self.update_mode(3)
+                    elif self.event_flag_ == 'stop':
+                        continue
+                        
+                # 处理字典命令（参数更新）
+                elif isinstance(command, dict) and 'type' in command:
+                    if command['type'] == 'update_params':
+                        self.update_control_param(
+                            command['K'], 
+                            command['D'], 
+                            command['M']
+                        )
 
             if not data_g2r_q.empty():
                 data_g2r = data_g2r_q.get()

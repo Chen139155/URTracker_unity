@@ -3,6 +3,9 @@ using NetMQ;
 using NetMQ.Sockets;
 using Newtonsoft.Json;
 using System.Text;
+using System.Collections.Generic;
+using TMPro;
+using UnityEngine.UI;
 
 public class ZmqManager : MonoBehaviour
 {
@@ -12,10 +15,31 @@ public class ZmqManager : MonoBehaviour
         public float x;
         public float y;
     }
+    
+    // MetricsData 类用于解析接收到的指标数据
+    public class MetricsData
+    {
+        public float e_c;
+        public float e_m;
+        public double timestamp;
+    }
+    
+    // MCTSActionData 类用于解析接收到的MCTS动作数据
+    public class MCTSActionData
+    {
+        public string difficulty;
+        public string feedback;
+        public string assistance;
+        public double timestamp;
+    }
+    
     public GameObject cursorGameObject;
+    public Slider metricsBar_e_c;
+    public Slider metricsBar_e_m;
+    public TextMeshProUGUI mctsActionText;
 
     // 网络套接字
-    private SubscriberSocket _subSocket;
+    private SubscriberSocket _subSocket;          // 用于接收光标位置
     private PublisherSocket _publisherSocket;
     
     // 初始化状态
@@ -28,11 +52,37 @@ public class ZmqManager : MonoBehaviour
     
     // 引用TargetControl脚本来获取secX和secY值
     private TargetControl _targetControl;
+    
+    // 用于存储接收到的数据
+    private MetricsData _latestMetrics;
+    private MCTSActionData _latestMCTSAction;
+    
+    // 用于平滑过渡的变量
+    private float _targetEC = 0f;
+    private float _targetEM = 0f;
+    private float _currentEC = 0f;
+    private float _currentEM = 0f;
+    private bool _isSmoothing = false;
+    private float _smoothingSpeed = 5.0f; // 平滑过渡速度
 
     void Start()
     {
+        _targetControl = GetComponent<TargetControl>();
         InitializeReceiver();
         InitializePublisher();
+        // 获取TargetControl组件
+        
+        // 初始化当前值
+        if (metricsBar_e_c != null)
+        {
+            _currentEC = metricsBar_e_c.value;
+            _targetEC = _currentEC;
+        }
+        if (metricsBar_e_m != null)
+        {
+            _currentEM = metricsBar_e_m.value;
+            _targetEM = _currentEM;
+        }
     }
 
     // 初始化接收器（接收光标位置）
@@ -43,21 +93,23 @@ public class ZmqManager : MonoBehaviour
             AsyncIO.ForceDotNet.Force();
             _subSocket = new SubscriberSocket();
             _subSocket.Connect("tcp://127.0.0.1:6001"); // 与 Python PUB 端口一致
-            _subSocket.SubscribeToAnyTopic();
-            _subSocket.Options.ReceiveHighWatermark = 1;  // 限制接收队列
+            _subSocket.Subscribe("cursor");     // 订阅光标数据
+            _subSocket.Subscribe("metrics");    // 订阅指标数据
+            _subSocket.Subscribe("mcts_action"); // 订阅MCTS动作数据
+            _subSocket.Options.ReceiveHighWatermark = 10;  // 增加接收队列
             _isReceiverInitialized = true;
+            Debug.Log("Unified Receiver 初始化成功");
         }
         catch (System.Exception e)
         {
-            Debug.LogError($"Cursor Receiver Socket 初始化失败: {e.Message}");
+            Debug.LogError($"Receiver Socket 初始化失败: {e.Message}");
         }
     }
 
     // 初始化发布器（发布副目标位置）
     private void InitializePublisher()
     {
-        // 获取TargetControl组件
-        _targetControl = GetComponent<TargetControl>();
+        
         if (_targetControl == null)
         {
             Debug.LogError("未找到 TargetControl 组件！");
@@ -81,10 +133,10 @@ public class ZmqManager : MonoBehaviour
 
     void Update()
     {
-        // 处理光标位置接收
+        // 处理所有消息接收
         if (_isReceiverInitialized)
         {
-            ProcessMessages();
+            ProcessAllMessages();
         }
 
         // 处理副目标位置发布
@@ -100,35 +152,120 @@ public class ZmqManager : MonoBehaviour
             Vector2 secondaryPos = new Vector2(secX, secY);
             PublishSecondaryPosition(secondaryPos);
         }
+        
+        // 平滑更新 Metrics 量条
+        SmoothUpdateMetricsBars();
+
+        // 更新 MCTS 动作显示
+        if (_latestMCTSAction != null)
+        {
+            mctsActionText.text = $"Difficulty: {_latestMCTSAction.difficulty}\nFeedback: {_latestMCTSAction.feedback}\nAssistance: {_latestMCTSAction.assistance}";
+        }
     }
 
-    // 处理接收到的消息（光标位置）
-    void ProcessMessages()
+    // 统一处理所有消息
+    void ProcessAllMessages()
     {
-        string latestMessage = null;
+        List<string> message=null;
         
-        // 接收所有可用消息，只保留最新的
-        while (_subSocket.TryReceiveFrameString(out string json))
+        // 接收所有可用消息
+        while (_subSocket.TryReceiveMultipartStrings(ref message))
         {
-            latestMessage = json;
-        }
-        
-        // 只处理最新的消息
-        if (!string.IsNullOrEmpty(latestMessage))
-        {
-            try
+            if (message.Count >= 2)
             {
-                var data = JsonConvert.DeserializeObject<CursorData>(latestMessage);
-                if (data != null)
+                string topic = message[0];
+                string jsonData = message[1];
+                
+                try
                 {
-                    Vector3 pos = new Vector3(data.x, data.y, 0);
-                    UpdateCursorVisual(pos);
+                    switch (topic)
+                    {
+                        case "cursor":
+                            var cursorData = JsonConvert.DeserializeObject<CursorData>(jsonData);
+                            if (cursorData != null)
+                            {
+                                Vector3 pos = new Vector3(cursorData.x, cursorData.y, 0);
+                                UpdateCursorVisual(pos);
+                            }
+                            break;
+                            
+                        case "metrics":
+                            var metricsData = JsonConvert.DeserializeObject<MetricsData>(jsonData);
+                            if (metricsData != null)
+                            {
+                                _latestMetrics = metricsData;
+                                // 设置目标值用于平滑过渡
+                                if (metricsBar_e_c != null)
+                                {
+                                    _targetEC = Mathf.Clamp(metricsData.e_c, metricsBar_e_c.minValue, metricsBar_e_c.maxValue);
+                                }
+                                if (metricsBar_e_m != null)
+                                {
+                                    _targetEM = Mathf.Clamp(metricsData.e_m, metricsBar_e_m.minValue, metricsBar_e_m.maxValue);
+                                }
+                                _isSmoothing = true;
+                                Debug.Log($"接收到指标数据: e_c={metricsData.e_c:F4}, e_m={metricsData.e_m:F4}");
+                            }
+                            break;
+                            
+                        case "mcts_action":
+                            var actionData = JsonConvert.DeserializeObject<MCTSActionData>(jsonData);
+                            if (actionData != null)
+                            {
+                                _latestMCTSAction = actionData;
+                                Debug.Log($"接收到MCTS动作: 难度={actionData.difficulty}, 反馈={actionData.feedback}, 辅助={actionData.assistance}");
+                                _targetControl.SetDifficulty(actionData.difficulty);
+                                _targetControl.SetFeedbackLevel(actionData.feedback);
+                            }
+                            break;
+                    }
+                }
+                catch (System.Exception e)
+                {
+                    Debug.LogError($"JSON 解析错误 (Topic: {topic}): {e.Message}");
                 }
             }
-            catch (System.Exception e)
-            {
-                Debug.LogError($"JSON 解析错误: {e.Message}");
-            }
+        }
+    }
+
+    // 平滑更新指标量条
+    private void SmoothUpdateMetricsBars()
+    {
+        if (!_isSmoothing) return;
+        
+        bool ecUpdated = false;
+        bool emUpdated = false;
+        
+        // 平滑更新 e_c 量条
+        if (metricsBar_e_c != null && Mathf.Abs(_currentEC - _targetEC) > 0.001f)
+        {
+            _currentEC = Mathf.Lerp(_currentEC, _targetEC, Time.deltaTime * _smoothingSpeed);
+            metricsBar_e_c.value = _currentEC;
+            ecUpdated = true;
+        }
+        else if (metricsBar_e_c != null)
+        {
+            _currentEC = _targetEC;
+            metricsBar_e_c.value = _currentEC;
+        }
+        
+        // 平滑更新 e_m 量条
+        if (metricsBar_e_m != null && Mathf.Abs(_currentEM - _targetEM) > 0.001f)
+        {
+            _currentEM = Mathf.Lerp(_currentEM, _targetEM, Time.deltaTime * _smoothingSpeed);
+            metricsBar_e_m.value = _currentEM;
+            emUpdated = true;
+        }
+        else if (metricsBar_e_m != null)
+        {
+            _currentEM = _targetEM;
+            metricsBar_e_m.value = _currentEM;
+        }
+        
+        // 如果两个量条都已达到目标值，停止平滑更新
+        if (!ecUpdated && !emUpdated)
+        {
+            _isSmoothing = false;
         }
     }
 
@@ -196,7 +333,7 @@ public class ZmqManager : MonoBehaviour
         
         try
         {
-            // 清理订阅套接字
+            // 清理光标订阅套接字
             if (_subSocket != null)
             {
                 _subSocket.Close();
@@ -207,7 +344,6 @@ public class ZmqManager : MonoBehaviour
         {
             Debug.LogError($"关闭SubscriberSocket时出错: {e.Message}");
         }
-        
         try
         {
             // 清理发布套接字

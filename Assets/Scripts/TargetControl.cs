@@ -1,53 +1,72 @@
 using System.Collections;
 using UnityEngine;
-using NetMQ;
-using NetMQ.Sockets;
-using System.Text;
 
 public class TargetControl : MonoBehaviour
 {
+    // 难度设置类
+    [System.Serializable]
+    public class DifficultySettings
+    {
+        public float initialSpeed;
+        public float speedChangeRate;
+    }
+    
+
+    // 三档难度设置
+    public DifficultySettings easyDifficulty = new DifficultySettings { initialSpeed = 20f, speedChangeRate = 15f };
+    public DifficultySettings mediumDifficulty = new DifficultySettings { initialSpeed = 30f, speedChangeRate = 22f };
+    public DifficultySettings hardDifficulty = new DifficultySettings { initialSpeed = 40f, speedChangeRate = 30f };
+
     public float radius = 4f; // 初始半径
-    public float initialSpeed = 40f; // 初始角速度
-    public float speedChangeRate = 30f; // 速度变化率
     public float speedChangeFrequency = 3f; // 速度变化频率
+    public float speedChangePhase = 0f; // 速度变化的相位
     public GameObject secondaryObject; // 第二个绕圈运动的物体
     public float secondaryRadius = 4f; // 固定半径
-    public float appearInterval = 2f;    // 出现时间间隔
-    public float disappearDuration = 1f; // 消失持续时间
+    public float appearInterval = 0.3f;    // 出现时间间隔
+    public float disappearDuration = 0.7f; // 消失持续时间
     public float RChangeInterval = 5f; // 触发频率（秒）
-
 
     private float angle = 0f; // 当前角度
     private float currentSpeed;
     private float targetRadius; // 目标半径
     private bool isRadiusChanging = false; // 是否正在改变半径
     private Coroutine radiusChangeCoroutine;
+    private Coroutine secondaryObjectBlinkCoroutine; // 保存协程引用
+    private float timeElapsed = 0f; // 添加时间累计变量
 
- 
     private float secX = 4.0f, secY = 0.0f;
     public float SecX { get { return secX; } }
     public float SecY { get { return secY; } }
+    
+    // 直接使用引用而不是复制值
+    private DifficultySettings currentDifficulty_setting = new DifficultySettings { initialSpeed = 30f, speedChangeRate = 22f };
+
+    // 当前难度级别
+    private string currentDifficulty = "medium";
 
     void Start()
     {
-
-        currentSpeed = initialSpeed;
+        ApplyDifficultySettings();
         targetRadius = radius; // 初始目标半径
-        StartCoroutine(SecondaryObjectBlink());
+        secondaryObjectBlinkCoroutine = StartCoroutine(SecondaryObjectBlink());
         radiusChangeCoroutine = StartCoroutine(AutoRadiusChange());
-
     }
 
     void Update()
     {
-
+        // 累计时间
+        timeElapsed += Time.deltaTime;
+        
         if (Input.GetKeyDown(KeyCode.Space))
         {
             TriggerRadiusChange(3f); // 在 3 秒内进行半径变化
         }
+        
         // 计算新的角度
         angle -= currentSpeed * Time.deltaTime;
         angle = (angle % 360f + 360f) % 360f;
+        speedChangePhase -= currentDifficulty_setting.initialSpeed * Time.deltaTime;
+        speedChangePhase = (speedChangePhase % 360f) % 360f;
 
         // 计算主物体的位置
         float x = Mathf.Cos(Mathf.Deg2Rad * angle) * radius;
@@ -62,8 +81,8 @@ public class TargetControl : MonoBehaviour
             secondaryObject.transform.position = new Vector3(secX, secY, secondaryObject.transform.position.z);
         }
 
-        // 改变角速度
-        currentSpeed = initialSpeed + Mathf.Cos(Mathf.Deg2Rad * angle * speedChangeFrequency) * speedChangeRate;
+        // 基于实际时间改变角速度，而不是基于角度
+        currentSpeed = currentDifficulty_setting.initialSpeed + Mathf.Cos(Mathf.Deg2Rad * speedChangeFrequency * speedChangePhase) * currentDifficulty_setting.speedChangeRate;
 
         if (secondaryObject != null && secondaryObject.activeSelf)
         {
@@ -71,8 +90,57 @@ public class TargetControl : MonoBehaviour
             secY = Mathf.Sin(Mathf.Deg2Rad * angle) * secondaryRadius;
             secondaryObject.transform.position = new Vector3(secX, secY, secondaryObject.transform.position.z);
         }
+    }
 
+    // 根据难度级别应用设置
+    public void SetDifficulty(string difficulty)
+    {
+        if (currentDifficulty != difficulty)
+        {
+            currentDifficulty = difficulty;
+            ApplyDifficultySettings();
+            Debug.Log($"难度已切换到: {difficulty}");
+        }
+    }
 
+    // 应用当前难度设置
+    private void ApplyDifficultySettings()
+    {
+        switch (currentDifficulty.ToLower())
+        {
+            case "low":
+                currentDifficulty_setting = easyDifficulty;
+                break;
+            case "medium":
+                currentDifficulty_setting = mediumDifficulty;
+                break;
+            case "high":
+                currentDifficulty_setting = hardDifficulty;
+                break;
+            default:
+                // 默认使用中等难度
+                currentDifficulty_setting = mediumDifficulty;
+                break;
+        }
+    }
+
+    public void SetFeedbackLevel(string feedback)
+    {
+        switch (feedback.ToLower())
+        {
+            case "low":
+                appearInterval = 0.1f;
+                disappearDuration = 0.9f;
+                break;
+            case "medium":
+                appearInterval = 0.4f;
+                disappearDuration = 0.6f;
+                break;
+            case "high":
+                appearInterval = 0.8f;
+                disappearDuration = 0.2f;
+                break;
+        }
     }
 
     public void TriggerRadiusChange(float T)
@@ -101,7 +169,6 @@ public class TargetControl : MonoBehaviour
         radius = newRadius;
         elapsedTime = 0f;
 
-
         // 平滑过渡回原半径
         while (elapsedTime < duration / 2f)
         {
@@ -116,28 +183,41 @@ public class TargetControl : MonoBehaviour
 
     private IEnumerator SecondaryObjectBlink()
     {
+        // 记录上次状态改变的时间
+        float lastStateChangeTime = Time.time;
+        bool isObjectVisible = false;
+        float currentInterval = disappearDuration; // 初始为消失时间
+
         while (true)
         {
             if (secondaryObject != null)
             {
-                // 显示物体
-                secondaryObject.SetActive(true);
+                float currentTime = Time.time;
+                float elapsedTime = currentTime - lastStateChangeTime;
 
-                // 保持显示状态
-                yield return new WaitForSeconds(appearInterval);
-
-                // 隐藏物体
-                secondaryObject.SetActive(false);
-
-                // 保持隐藏状态
-                yield return new WaitForSeconds(disappearDuration);
+                // 检查是否应该切换状态
+                if (isObjectVisible && elapsedTime >= appearInterval)
+                {
+                    // 从显示切换到隐藏
+                    secondaryObject.SetActive(false);
+                    isObjectVisible = false;
+                    lastStateChangeTime = currentTime;
+                    currentInterval = disappearDuration;
+                }
+                else if (!isObjectVisible && elapsedTime >= disappearDuration)
+                {
+                    // 从隐藏切换到显示
+                    secondaryObject.SetActive(true);
+                    isObjectVisible = true;
+                    lastStateChangeTime = currentTime;
+                    currentInterval = appearInterval;
+                }
             }
-            else
-            {
-                yield return null;
-            }
+            
+            yield return null; // 每帧检查一次
         }
     }
+    
     private IEnumerator AutoRadiusChange()
     {
         while (true)
@@ -147,6 +227,3 @@ public class TargetControl : MonoBehaviour
         }
     }
 }
-
-   
-    

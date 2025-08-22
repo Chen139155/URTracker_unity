@@ -4,6 +4,8 @@ from collections import defaultdict, namedtuple
 import logging
 import time
 import queue
+import json
+import os
 
 # ==== 状态定义 ====
 STATE_LABELS = {
@@ -30,9 +32,9 @@ for d in DifficultyLevels:
 def compute_reward(state, action):
     # 人的状态分值（正常最好）
     state_score = {
-        0: 1.0,
-        1: 0.3,
-        2: 0.3,
+        0: 4.0,
+        1: 0.5,
+        2: 0.5,
         3: 0.0
     }[state]
     
@@ -44,9 +46,12 @@ def compute_reward(state, action):
     challenge_score = (difficulty_score + feedback_score + assistance_score) / 3.0
 
     # 奖励是两者结合，权重可调整
-    return 0.7 * state_score + 0.3 * challenge_score
+    return 0.75 * state_score + 0.25 * challenge_score
 
 # ==== 状态转移概率库 ====
+import json
+import os
+
 class TransitionModel:
     def __init__(self):
         # P(next_state | current_state, action)
@@ -55,6 +60,8 @@ class TransitionModel:
 
     def update(self, state, action, next_state):
         key = (state, action)
+        if key not in self.counts:
+            self.counts[key] = defaultdict(int)
         self.counts[key][next_state] += 1
         total = sum(self.counts[key].values())
         for ns in self.counts[key]:
@@ -64,10 +71,37 @@ class TransitionModel:
         key = (state, action)
         probs = self.probabilities[key]
         if not probs:
-            # 随机初始化
             return random.choice(list(STATE_LABELS.keys()))
         states, weights = zip(*probs.items())
         return random.choices(states, weights=weights)[0]
+
+    def save(self, filepath):
+        # 转成可序列化格式
+        serializable_counts = {}
+        for (state, action), next_states in self.counts.items():
+            key_str = f"{state}|{action.difficulty}|{action.feedback}|{action.assistance}"
+            serializable_counts[key_str] = dict(next_states)
+        with open(filepath, 'w') as f:
+            json.dump(serializable_counts, f, indent=4)
+        print(f"TransitionModel 已保存到 {filepath}")
+
+    def load(self, filepath):
+        if not os.path.exists(filepath):
+            print(f"{filepath} 不存在，使用空模型")
+            return
+        with open(filepath, 'r') as f:
+            loaded_counts = json.load(f)
+        for key_str, next_states in loaded_counts.items():
+            state_str, d, fdbk, assist = key_str.split('|')
+            state = int(state_str)
+            action = Action(d, fdbk, assist)
+            key = (state, action)
+            self.counts[key] = defaultdict(int, {int(k): v for k, v in next_states.items()})
+            total = sum(self.counts[key].values())
+            for ns in self.counts[key]:
+                self.probabilities[key][ns] = self.counts[key][ns] / total
+        print(f"TransitionModel 已从 {filepath} 加载")
+
 
 # ==== MCTS节点与主类 ====
 class MCTSNode:
@@ -149,6 +183,10 @@ def mcts_thread_function(mcts_input_queue, mcts_output_queue):
     """
     # 初始化转移模型和MCTS
     transition_model = TransitionModel()
+    # ==== 加载模型 ====
+    model_file = "model.json"
+    transition_model.load(model_file)
+
     mcts = MCTS(transition_model=transition_model, iterations=100)
     
     last_state = None
@@ -172,18 +210,18 @@ def mcts_thread_function(mcts_input_queue, mcts_output_queue):
                 
                 # 更新转移模型（如果有前一个状态和动作）
                 if last_state is not None and last_action is not None:
-                    # 根据e_c和e_m确定当前实际状态
-                    if e_c < 0.01 and e_m < 0.008:
-                        actual_state = 0  # Normal
-                    elif e_c < 0.01 and e_m >= 0.008:
-                        actual_state = 1  # Motor Abnormal
-                    elif e_c >= 0.01 and e_m < 0.008:
-                        actual_state = 2  # Attention Abnormal
-                    else:
-                        actual_state = 3  # Mixed Abnormal
+                    # # 根据e_c和e_m确定当前实际状态
+                    # if e_c < 0.01 and e_m < 0.008:
+                    #     actual_state = 0  # Normal
+                    # elif e_c < 0.01 and e_m >= 0.008:
+                    #     actual_state = 1  # Motor Abnormal
+                    # elif e_c >= 0.01 and e_m < 0.008:
+                    #     actual_state = 2  # Attention Abnormal
+                    # else:
+                    #     actual_state = 3  # Mixed Abnormal
                     
                     # 更新转移模型
-                    transition_model.update(last_state, last_action, actual_state)
+                    transition_model.update(last_state, last_action, state_flag)
                 
                 # 执行MCTS搜索
                 best_action_node = mcts.search(state_flag)
@@ -202,6 +240,7 @@ def mcts_thread_function(mcts_input_queue, mcts_output_queue):
                 logging.info(f"MCTS推荐动作: 难度={best_action.difficulty}, 反馈={best_action.feedback}, 辅助={best_action.assistance}")
             
             time.sleep(1.0)  # 每秒执行一次
+            transition_model.save(model_file)
             
         except Exception as e:
             logging.error(f"MCTS线程错误: {e}")
