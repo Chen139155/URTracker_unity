@@ -224,8 +224,8 @@ if __name__ == "__main__":
     mcts_out_q = queue.Queue(maxsize=1)
 
     # 识别参数
-    tau_cog = 2.5
-    tau_mot = 1.8
+    tau_cog = 2.3
+    tau_mot = 1.5
     # MCTS动作相关变量
     mcts_difficulty = 'medium'  # 默认难度
     mcts_feedback = 'medium'    # 默认反馈
