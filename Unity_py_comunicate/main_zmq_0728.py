@@ -224,8 +224,8 @@ if __name__ == "__main__":
     mcts_out_q = queue.Queue(maxsize=1)
 
     # 识别参数
-    tau_cog = 2.5
-    tau_mot = 1.8
+    tau_cog = 2.3
+    tau_mot = 1.5
     # MCTS动作相关变量
     mcts_difficulty = 'medium'  # 默认难度
     mcts_feedback = 'medium'    # 默认反馈
@@ -353,24 +353,26 @@ if __name__ == "__main__":
             # 接收来自Unity的数据
             ## target
             try:
-                target_s = target_sub_socket.recv_string(flags=zmq.NOBLOCK)
-                target = json.loads(target_s)
-                logging.debug('接收到 target: %f, %f',target["x"], target["y"])
-                target_r = pos_g2r(r_r, r_g, pos_cg, pos_cr, [target["x"], target["y"]])
-                
+                unity_topic_s, target_s = target_sub_socket.recv_multipart(flags=zmq.NOBLOCK)                
             except zmq.Again:
                 logging.warning('未接收到target')
                 time.sleep(0.001)  # 1ms
             except zmq.ZMQError as e:
                 logging.error(f"接收Unity数据时ZMQ错误: {e}")
-            except json.JSONDecodeError as e:
-                logging.error(f"解析Unity数据JSON失败: {e}")
             except Exception as e:
                 logging.error(f"接收Unity数据时未知错误: {e}")
+
+            unity_topic = unity_topic_s.decode()
+            # 分主题解析处理Unity数据
+            if unity_topic == "TargetPosition":
+                target = json.loads(target_s)
+                logging.debug('接收到 target: %f, %f',target["x"], target["y"])
+                target_r = pos_g2r(r_r, r_g, pos_cg, pos_cr, [target["x"], target["y"]])
             try:
                 g2r_q.put_nowait(target_r)
             except:
                 pass
+            
 
             # 每10个循环发送一次数据副本给计算线程（约每0.2秒）
             data_send_counter += 1
