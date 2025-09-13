@@ -297,11 +297,26 @@ public class ZmqManager : MonoBehaviour
                        .Append("}");
 
             // 使用非阻塞发送避免潜在的阻塞问题
-            _publisherSocket.TrySendFrame(jsonBuilder.ToString());
+            _publisherSocket.SendMoreFrame("TargetPosition").SendFrame(jsonBuilder.ToString());
         }
         catch (System.Exception e)
         {
             Debug.LogError($"发布目标位置失败: {e.Message}");
+        }
+    }
+    public void PublishTaskStage(string stageName)
+    {
+        if (!_isPublisherInitialized || !_isPublisherRunning) return;
+
+        try
+        {
+            string json = $"{{\"stage\":\"{stageName}\"}}";
+            _publisherSocket.SendMoreFrame("TaskStage").SendFrame(json);
+            Debug.Log($"已发布 TaskStage: {stageName}");
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError($"发布 TaskStage 失败: {e.Message}");
         }
     }
     
