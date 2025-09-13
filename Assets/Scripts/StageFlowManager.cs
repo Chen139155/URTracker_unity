@@ -31,6 +31,15 @@ public class StageFlowManager : MonoBehaviour
     // 阶段切换事件，订阅的模块可根据 stageName 修改状态
     public event Action<string> OnStageChanged;
 
+    void Update()
+    {
+        // 按下 PageDown 键跳过当前阶段
+        if (Input.GetKeyDown(KeyCode.PageDown))
+        {
+            SkipToNextStage();
+        }
+    }
+
     /// <summary>
     /// 开始阶段流
     /// </summary>
