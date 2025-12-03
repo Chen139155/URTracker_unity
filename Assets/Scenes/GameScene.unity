@@ -1048,15 +1048,15 @@ MonoBehaviour:
   - stageName: IDLE
     duration: 10
   - stageName: nAnM
-    duration: 120
+    duration: 60
   - stageName: nAaM
-    duration: 120
+    duration: 60
   - stageName: aAnM
-    duration: 120
+    duration: 60
   - stageName: aAaM
-    duration: 120
+    duration: 60
   - stageName: FINISH
-    duration: 120
+    duration: 10
   zmqManager: {fileID: 390276592}
   stageNameText: {fileID: 484929224}
   timerText: {fileID: 1186175756}

@@ -282,41 +282,67 @@ public class ZmqManager : MonoBehaviour
     }
 
     // 发布副目标位置
+    // public void PublishSecondaryPosition(Vector2 position)
+    // {
+    //     if (!_isPublisherInitialized || !_isPublisherRunning) return;
+
+    //     try
+    //     {
+    //         var jsonBuilder = new StringBuilder(64);
+    //         jsonBuilder.Clear();
+    //         jsonBuilder.Append("{\"x\":")
+    //                    .Append(position.x.ToString("F4")).Append(",")
+    //                    .Append("\"y\":")
+    //                    .Append(position.y.ToString("F4"))
+    //                    .Append("}");
+
+    //         // 使用非阻塞发送避免潜在的阻塞问题
+    //         _publisherSocket.SendMoreFrame("TargetPosition").SendFrame(jsonBuilder.ToString());
+    //     }
+    //     catch (System.Exception e)
+    //     {
+    //         Debug.LogError($"发布目标位置失败: {e.Message}");
+    //     }
+    // }
     public void PublishSecondaryPosition(Vector2 position)
     {
         if (!_isPublisherInitialized || !_isPublisherRunning) return;
 
         try
         {
-            var jsonBuilder = new StringBuilder(64);
-            jsonBuilder.Clear();
-            jsonBuilder.Append("{\"x\":")
-                       .Append(position.x.ToString("F4")).Append(",")
-                       .Append("\"y\":")
-                       .Append(position.y.ToString("F4"))
-                       .Append("}");
-
+            // 将topic和数据合并为单条消息
+            var data = new {
+                topic = "TargetPosition",
+                x = position.x,
+                y = position.y
+            };
+            
+            string jsonData = JsonConvert.SerializeObject(data);
             // 使用非阻塞发送避免潜在的阻塞问题
-            _publisherSocket.SendMoreFrame("TargetPosition").SendFrame(jsonBuilder.ToString());
+            _publisherSocket.TrySendFrame(jsonData);
+            Debug.Log($"[ZmqManager] 发布消息: {jsonData}");
         }
         catch (System.Exception e)
         {
-            Debug.LogError($"发布目标位置失败: {e.Message}");
+            Debug.LogError($"[ZmqManager] 发布目标位置失败: {e.Message}");
         }
     }
+
     public void PublishTaskStage(string stageName)
     {
         if (!_isPublisherInitialized || !_isPublisherRunning) return;
 
         try
         {
-            string json = $"{{\"stage\":\"{stageName}\"}}";
-            _publisherSocket.SendMoreFrame("TaskStage").SendFrame(json);
-            Debug.Log($"已发布 TaskStage: {stageName}");
+            // 将topic和数据合并为单条消息
+            string jsonData = $"{{\"topic\":\"TaskStage\",\"stage\":\"{stageName}\"}}";
+            
+            _publisherSocket.TrySendFrame(jsonData);
+            Debug.Log($"[ZmqManager] 发布消息: {jsonData}");
         }
         catch (System.Exception e)
         {
-            Debug.LogError($"发布 TaskStage 失败: {e.Message}");
+            Debug.LogError($"[ZmqManager] 发布 TaskStage 失败: {e.Message}");
         }
     }
     

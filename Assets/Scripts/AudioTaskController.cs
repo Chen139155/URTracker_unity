@@ -159,7 +159,7 @@ public class AudioTaskController : MonoBehaviour
             }
         }
     }
-s
+
     public bool GetAnswerByIndex(int index)
     {
         if (index >= 0 && index < inequalityDataList.Count)

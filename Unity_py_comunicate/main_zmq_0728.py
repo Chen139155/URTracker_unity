@@ -59,7 +59,7 @@ def gaze_data_callback(gaze_data):
     global latest_gaze_data
     latest_gaze_data = gaze_data
 
-def setup_logger(debug=False):
+def setup_logger(debug=True):
     level = logging.DEBUG if debug else logging.INFO
     logging.basicConfig(
         level=level,
@@ -193,14 +193,15 @@ def interpolate_params(start_params, end_params, progress):
 if __name__ == "__main__":
     setup_logger()
     # 初始化参数
-    r_g, r_r = 4.0, 0.1
-    pos_cg, pos_cr = [0.0, 0.0], [0.625, -0.050]
+    r_g, r_r = 4.0, 0.08
+    pos_cg, pos_cr = [0.0, 0.0], [0.6, -0.050]
     pos_gaze = [0.0,0.0]
     cursor_g = [0.0,0.0]
     target_g = [0.0,0.0]
-    target = {"x":0.0, "y":0.0}
+    target = {"x":r_g, "y":0.0}
+    target_r = pos_g2r(r_r, r_g, pos_cg, pos_cr, [target["x"], target["y"]])
 
-    stage_id = 0
+    stage_id = -1
     state_flag = 0
     motor_flag = 0
     e_c = 0
@@ -230,6 +231,10 @@ if __name__ == "__main__":
     mcts_difficulty = 'medium'  # 默认难度
     mcts_feedback = 'medium'    # 默认反馈
     mcts_assistance = 'medium'  # 默认辅助
+    # 获取当前的K、D、M参数
+    current_K = np.array([250, 250, 250])  # 默认中等辅助参数
+    current_D = np.array([80, 80, 80])
+    current_M = np.array([40, 40, 40])
 
     # 渐变切换相关变量
     is_transitioning = False  # 是否正在进行参数渐变切换
@@ -290,8 +295,10 @@ if __name__ == "__main__":
     mcts_thread = threading.Thread(target=mcts_thread_function, args=(mcts_in_q, mcts_out_q), daemon=True)
     mcts_thread.start()
 
+    g2r_q.put_nowait(target_r)
+
     # 等待所有设备线程就绪
-    time.sleep(2)
+    time.sleep(10)
     
 
     # 添加循环频率控制
@@ -353,23 +360,68 @@ if __name__ == "__main__":
             # 接收来自Unity的数据
             ## target
             try:
-                unity_topic_s, target_s = target_sub_socket.recv_multipart(flags=zmq.NOBLOCK)                
+                # 接收单条消息而不是多部分消息
+                message = target_sub_socket.recv_string(flags=zmq.NOBLOCK)
+                
+                if message:
+                    try:
+                        # 解析JSON消息
+                        data = json.loads(message)
+                        
+                        # 根据topic处理不同类型的消息
+                        if "topic" in data:
+                            topic = data["topic"]
+                            logging.debug(f"收到消息 - Topic: {topic}, 内容: {message}")
+                            
+                            if topic == "TargetPosition":
+                                if "x" in data and "y" in data:
+                                    target = {"x": data["x"], "y": data["y"]}
+                                    logging.debug('接收到 target: %f, %f', target["x"], target["y"])
+                                    target_r = pos_g2r(r_r, r_g, pos_cg, pos_cr, [target["x"], target["y"]])
+                                else:
+                                    logging.warning("TargetPosition消息缺少x或y字段")
+                                    
+                            elif topic == "TaskStage":
+                                if "stage" in data:
+                                    task_stage = data
+                                    logging.debug("接收到TaskStage变更: " + task_stage["stage"])
+                                    # stage id (0:IDLE, 1:nAnM, 2:nAaM, 3:aAnM, 4:aAaM, 5:FINISH)
+                                    if task_stage["stage"] == "IDLE":
+                                        stage_id = 0
+                                    elif task_stage["stage"] == "nAnM":
+                                        stage_id = 1
+                                    elif task_stage["stage"] == "nAaM":
+                                        stage_id = 2
+                                    elif task_stage["stage"] == "aAnM":
+                                        stage_id = 3
+                                    elif task_stage["stage"] == "aAaM":
+                                        stage_id = 4
+                                    elif task_stage["stage"] == "FINISH":
+                                        stage_id = 5
+                                else:
+                                    logging.warning("TaskStage消息缺少stage字段")
+                            else:
+                                logging.warning(f"未知的topic: {topic}")
+                        else:
+                            logging.warning("消息缺少topic字段")
+                            
+                    except json.JSONDecodeError as e:
+                        logging.error(f"解析JSON数据时出错: {e}")
+                        
             except zmq.Again:
-                logging.warning('未接收到target')
-                time.sleep(0.001)  # 1ms
+                # 没有数据可接收，这是正常情况
+                logging.debug("没有数据可接收")
+                pass
             except zmq.ZMQError as e:
                 logging.error(f"接收Unity数据时ZMQ错误: {e}")
             except Exception as e:
                 logging.error(f"接收Unity数据时未知错误: {e}")
 
-            unity_topic = unity_topic_s.decode()
-            # 分主题解析处理Unity数据
-            if unity_topic == "TargetPosition":
-                target = json.loads(target_s)
-                logging.debug('接收到 target: %f, %f',target["x"], target["y"])
-                target_r = pos_g2r(r_r, r_g, pos_cg, pos_cr, [target["x"], target["y"]])
+            
+
             try:
                 g2r_q.put_nowait(target_r)
+                logging.debug("发送target给Robot:%f, %f", target_r["x"], target_r["y"])
             except:
                 pass
             
@@ -417,6 +469,7 @@ if __name__ == "__main__":
                     'timestamp':current_time
                 }
                 try:
+                    ############################### 无调节修改这一行 ##################################
                     mcts_in_q.put_nowait(mcts_data)
                     logging.info(f"向MCTS发送数据: state_flag={state_flag}, e_c={e_c:.4f}, e_m={e_m:.4f}")
                 except queue.Full:
@@ -460,6 +513,9 @@ if __name__ == "__main__":
                         'D': interpolated_params['D'],
                         'M': interpolated_params['M']
                     })
+                    current_K = interpolated_params['K']
+                    current_D = interpolated_params['D']
+                    current_M = interpolated_params['M']
                 except queue.Full:
                     pass
                 # 如果渐变完成，结束切换过程
@@ -469,7 +525,8 @@ if __name__ == "__main__":
 
 
             # 保存数据
-            row = {"time":  time.time()-start_time, "target_x": target["x"], "target_y": target["y"],
+            row = {"time":  time.time(), 
+                "target_x": target["x"], "target_y": target["y"],
                 "cursor_x": cursor_g[0], "cursor_y": cursor_g[1],
                 "Hex_x": state["Hex_x"], "Hex_y": state["Hex_y"],
                 "force_norm": state["force_norm"], "linear_x": state["linear_x"],
@@ -478,9 +535,14 @@ if __name__ == "__main__":
                 "pose_z": state["pose_z"], "pose_rx": state["pose_rx"],
                 "pose_ry": state["pose_ry"], "pose_rz": state["pose_rz"],
                 "Gaze_x": pos_gaze[0], "Gaze_y": pos_gaze[1],
+                "left_pupil_diameter": latest_gaze_data['left_pupil_diameter'], 
+                "right_pupil_diameter": latest_gaze_data['right_pupil_diameter'],
                 "stage_id":stage_id, "state_flag": state_flag,"e_c": e_c, "e_m":e_m,
                 "I_FB": I_FB, "I_ASST": I_ASST,
-                "mcts_difficulty": mcts_difficulty, "mcts_feedback": mcts_feedback, "mcts_assistance": mcts_assistance
+                "mcts_difficulty": mcts_difficulty, "mcts_feedback": mcts_feedback, "mcts_assistance": mcts_assistance,
+                "K_0": float(current_K[0]), "K_1": float(current_K[1]), "K_2": float(current_K[2]),
+                "D_0": float(current_D[0]), "D_1": float(current_D[1]), "D_2": float(current_D[2]),
+                "M_0": float(current_M[0]), "M_1": float(current_M[1]), "M_2": float(current_M[2])
             }
             df_window.append(row)
 
