@@ -17,6 +17,7 @@ import time
 import math
 import threading
 import numpy as np
+import logging
 
 # ensure URBasic package is importable; adapt path if needed
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -28,6 +29,8 @@ import URBasic.urScriptExt
 
 # user-specific force sensor reader (your existing module)
 import hex  # keep using your hex.udp_get() - must return array-like [fx,fy,fz,tx,ty,tz]
+
+logger = logging.getLogger(__name__)
 
 class KalmanFilter:
     """
@@ -128,6 +131,13 @@ class AdmittanceForceMode:
         self.adm_x_e = np.zeros(3, dtype=float)
         self.adm_v = np.zeros(3, dtype=float)
 
+        self.target_vel = np.zeros(3, dtype = float)  # 目标速度估计
+        self.target_acc = np.zeros(3, dtype = float)  # 目标加速度估计
+        self.arm_acc = np.zeros(3, dtype = float) # 末端加速度估计
+        self.last_target_pos = np.zeros(3,dtype = float)
+        self.last_target_vel = np.zeros(3,dtype = float)
+        self.last_arm_vel = np.zeros(3, dtype = float)
+
         # Force sensor variables
         self.force_raw = np.zeros(3, dtype=float)
         self.force_filt = np.zeros(3, dtype=float)
@@ -146,7 +156,7 @@ class AdmittanceForceMode:
 
         # Initialize Kalman filters BEFORE using them
         # This is the critical fix to resolve the AttributeError
-        print("[AdmittanceForceMode] Initializing Kalman filters...")
+        logger.info("[AdmittanceForceMode] Initializing Kalman filters...")
         initial_state_tcp = np.zeros(6)
         initial_uncertainty_tcp = np.eye(6) * 0.15
         process_noise_tcp = np.eye(6) * 0.01
@@ -175,8 +185,8 @@ class AdmittanceForceMode:
         self.M = np.array(adm_M, dtype=float)
         self.D = np.array(adm_D, dtype=float)
         self.K = np.array(adm_K, dtype=float)
-        self.Fk = np.array(force_gain_pos, dtype=float)
-        self.Fd = np.array(force_gain_vel, dtype=float)
+        # self.Fk = np.array(force_gain_pos, dtype=float)
+        # self.Fd = np.array(force_gain_vel, dtype=float)
         self.max_wrench = np.array(max_wrench, dtype=float)
 
         # Force mode parameters
@@ -196,7 +206,7 @@ class AdmittanceForceMode:
             pass
 
         # Initialize robot-side force_mode program
-        print("[AdmittanceForceMode] Initializing force mode...")
+        logger.info("[AdmittanceForceMode] Initializing force mode...")
         self.UR.init_force_remote(task_frame=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0], f_type=self.f_type)
 
         # Now we can safely call get_state() since filters are initialized
@@ -211,7 +221,7 @@ class AdmittanceForceMode:
         self._calibrate_sensor_bias()
 
         # Get initial position as circle center
-        print("[AdmittanceForceMode] Getting initial robot pose for circle center...")
+        logger.info("[AdmittanceForceMode] Getting initial robot pose for circle center...")
         initial_positions = []
         for _ in range(5):  # Read 5 times and average to reduce noise
             self.get_state()
@@ -220,19 +230,19 @@ class AdmittanceForceMode:
         
         # Use average as initial position
         self.circle_center = np.mean(initial_positions, axis=0)
-        print(f"[CRITICAL] Circle center set to initial position: {self.circle_center}")
+        logger.info(f"[CRITICAL] Circle center set to initial position: {self.circle_center}")
         
         # Use provided center if available
         if circle_center is not None:
             self.circle_center = circle_center
-            print(f"[CRITICAL] Using provided circle center: {self.circle_center}")
+            logger.info(f"[CRITICAL] Using provided circle center: {self.circle_center}")
         
         self.circle_radius = circle_radius
         self.circle_frequency = circle_frequency
-        print(f"[CRITICAL] Circle parameters: radius={circle_radius}m, frequency={circle_frequency}Hz")
+        logger.info(f"[CRITICAL] Circle parameters: radius={circle_radius}m, frequency={circle_frequency}Hz")
 
         # Initialize robot to standstill
-        print("[AdmittanceForceMode] Setting initial zero wrench...")
+        logger.info("[AdmittanceForceMode] Setting initial zero wrench...")
         self.send_force_mode_command(wrench=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
                                      selection_vector=self.selection_vector,
                                      limits=self.wrench_limits,
@@ -302,7 +312,7 @@ class AdmittanceForceMode:
             self.bias_x = 0.1
             self.bias_y = 0.3
             self.is_bias_calibrated = False
-            print("[AdmittanceForceMode] Calibration failed, using default values")
+            logger.warning("Calibration failed, using default values")
     
 
     def read_force_sensor(self):
@@ -372,6 +382,7 @@ class AdmittanceForceMode:
             self.arm_pose[:3] = filtered_pose
             self.arm_pose[3:] = pose[3:] 
             self.arm_pos = filtered_pose.copy()
+            self.last_arm_vel[:3] = self.arm_vel[:3]
             self.arm_vel[:3] = filtered_vel
             self.arm_vel[3:] = vel[3:]
 
@@ -410,7 +421,7 @@ class AdmittanceForceMode:
         
         # 调试信息
         if is_applied:
-            print(f"[DEBUG] Force detected! Magnitude: {force_magnitude:.2f}N, Threshold: {self.force_threshold}N")
+            logger.debug(f"[DEBUG] Force detected! Magnitude: {force_magnitude:.2f}N, Threshold: {self.force_threshold}N")
         
         return is_applied
 
@@ -426,104 +437,232 @@ class AdmittanceForceMode:
         """
         # Read force sensor data
         self.read_force_sensor()
-        
+        # Read robot state
+        self.get_state()
         # Calculate target position using circular trajectory
-        target_pos = self.get_circle_trajectory(elapsed_time)
+        # target_pos = self.get_circle_trajectory(elapsed_time)
+        target_pos = self.desired_pose[0:3].copy()
+        
+        self.arm_acc = (self.arm_vel[:3]-self.last_arm_vel[:3])/elapsed_time
+        self.last_target_vel=self.target_vel.copy()
+        self.target_vel = (self.desired_pose[:3]-self.last_target_pos[:3])/elapsed_time
+        self.target_acc = (self.target_vel[:3]-self.last_target_vel[:3])/elapsed_time
         
         # Modified debug frequency to 2 seconds
         if int(elapsed_time) % 2 == 0 and elapsed_time - int(elapsed_time) < 0.1:  # Every 2 seconds
             current_pos = self.arm_pos.copy()
             pos_error = np.linalg.norm(target_pos - current_pos)
             distance_from_center = np.linalg.norm(current_pos[:2] - self.circle_center[:2])
-            print(f"[DEBUG] Elapsed: {elapsed_time:.2f}s, Target: {target_pos}, Current: {current_pos}, Error: {pos_error:.3f}m")
-            print(f"[DEBUG] Distance from center: {distance_from_center:.3f}m, Target radius: {self.circle_radius}m")
+            logger.debug(f"[DEBUG] Elapsed: {elapsed_time:.2f}s, Target: {target_pos}, Current: {current_pos}, Error: {pos_error:.3f}m")
+            logger.debug(f"[DEBUG] Distance from center: {distance_from_center:.3f}m, Target radius: {self.circle_radius}m")
         
         return target_pos
 
+    # def pos_error_to_wrench(self, target_pos):
+    #     """
+    #     Convert position error to wrench commands using on-demand assistance strategy
+    #     """
+    #     # Debug: Track position error for XY axes separately
+    #     with self.lock:
+    #         pos = self.arm_pos.copy()
+    #         arm_vel = self.arm_vel[0:3].copy()
+    #         target_vel = self.target_vel.copy()
+    #         arm_acc = self.arm_acc.copy()
+    #         target_acc = self.target_acc.copy()
+    #         K = self.K.copy()
+    #         D = self.D.copy()
+    #         M = self.M.copy()
+
+            
+
+    #     # Calculate position errors vector
+    #     pos_err = target_pos - pos
+    #     vel_err = target_vel - arm_vel
+    #     acc_err = target_acc - arm_acc
+        
+    #     # Calculate error magnitude
+    #     error_magnitude = np.linalg.norm(pos_err[:2])
+        
+    #     # Initialize wrench
+    #     wrench = np.zeros(3)
+        
+    #     # Axis-specific control gains to address elliptical trajectory
+    #     # Different gains for X and Y axes to compensate for mechanical differences
+    #     x_gain = 200.0  # X-axis proportional gain
+    #     y_gain = 250.0  # Y-axis proportional gain (higher to compensate if needed)
+    #     x_vel_damping = 0.4  # X-axis velocity damping
+    #     y_vel_damping = 0.4  # Y-axis velocity damping
+        
+    #     # CRITICAL FIX: Use axis-specific gains for each coordinate to achieve circular trajectory
+    #     for i in range(2):  # Only process XY plane
+    #         error = pos_err[i]
+            
+    #         # Apply axis-specific proportional control
+    #         if error_magnitude < self.critical_error_threshold:
+    #             # Small error case: use axis-specific proportional control
+    #             gain = x_gain if i == 0 else y_gain
+    #             wrench[i] = gain * error
+    #         else:
+    #             # Large error case: use piecewise function with axis-specific gains
+    #             direction = pos_err[i] / (error_magnitude + 1e-6)  # Avoid division by zero
+                
+    #             error_excess = error_magnitude - self.critical_error_threshold
+                
+    #             # Different gains for each axis in the piecewise function
+    #             if i == 0:  # X-axis
+    #                 base_gain = 400.0      # Can remain the same or be slightly increased
+    #                 linear_gain = 900.0    # Consider increasing for faster response beyond 3cm
+    #                 cubic_gain = 22000.0   # Consider increasing for even faster response to large errors
+    #             else:  # Y-axis
+    #                 base_gain = 400.0      # Can remain the same or be slightly increased
+    #                 linear_gain = 900.0    # Consider increasing for faster response beyond 3cm
+    #                 cubic_gain = 22000.0   # Consider increasing for even faster response to large errors
+                     
+    #             force_magnitude = (base_gain * self.critical_error_threshold +
+    #                             linear_gain * error_excess +
+    #                             cubic_gain * error_excess**3)
+                
+    #             wrench[i] = force_magnitude * direction
+            
+    #         # Use axis-specific velocity damping
+    #         vel_damping = x_vel_damping if i == 0 else y_vel_damping
+    #         wrench[i] += vel_damping * vel_err[i]
+        
+    #     # Axis-specific maximum force limits
+    #     max_force_x = 40.0  # X-axis maximum force
+    #     max_force_y = 40.0  # Y-axis maximum force
+        
+    #     # Clamp wrench values to axis-specific maximum limits
+    #     for i in range(2):
+    #         max_force = max_force_x if i == 0 else max_force_y
+    #         if abs(wrench[i]) > max_force:
+    #             wrench[i] = math.copysign(max_force, wrench[i])
+    #             # Only print this debug info every 2 seconds
+    #             current_time = time.perf_counter() - self.start_time
+    #             if int(current_time) % 2 == 0 and current_time - int(current_time) < 0.1:
+    #                 axis_name = 'X' if i == 0 else 'Y'
+    #                 print(f"[DEBUG] {axis_name}-axis wrench clamped to max: {wrench[i]}N")
+
+    #     # Complete 6D wrench
+    #     wrench_full = [float(wrench[0]), float(wrench[1]), float(wrench[2]), 0.0, 0.0, 0.0]
+        
+    #     # Only print wrench info every 2 seconds
+    #     current_time = time.perf_counter() - self.start_time
+    #     if int(current_time) % 2 == 0 and current_time - int(current_time) < 0.1:
+    #         print(f"[DEBUG] Sending wrench: {wrench_full}")
+        
+    #     return wrench_full
     def pos_error_to_wrench(self, target_pos):
         """
-        Convert position error to wrench commands using on-demand assistance strategy
+        Impedance/admittance style controller:
+            F = M * (a_d - a) + D * (v_d - v) + K * (x_d - x)
+
+        Uses:
+        - self.M, self.D, self.K  (each can be length-3 array or 3x3 matrix)
+        - self.target_vel, self.target_acc (estimated)
+        - self.arm_vel, self.arm_acc (measured/estimated)
+        - self.max_wrench (axis-wise limits, length-3)
+        Returns 6D wrench list [Fx, Fy, Fz, 0,0,0]
         """
-        # Debug: Track position error for XY axes separately
+
+        # -------- 1) Thread-safe snapshot of variables --------
         with self.lock:
-            pos = self.arm_pos.copy()
-            vel = self.arm_vel[0:3].copy()
+            pos = np.asarray(self.arm_pos.copy(), dtype=float)          # 3
+            arm_vel = np.asarray(self.arm_vel[0:3].copy(), dtype=float) # 3
+            arm_acc = np.asarray(self.arm_acc.copy(), dtype=float)      # 3
 
-        # Calculate position error vector
-        pos_err = target_pos - pos
-        vel_err = -vel
-        
-        # Calculate error magnitude
-        error_magnitude = np.linalg.norm(pos_err[:2])
-        
-        # Initialize wrench
-        wrench = np.zeros(3)
-        
-        # Axis-specific control gains to address elliptical trajectory
-        # Different gains for X and Y axes to compensate for mechanical differences
-        x_gain = 200.0  # X-axis proportional gain
-        y_gain = 250.0  # Y-axis proportional gain (higher to compensate if needed)
-        x_vel_damping = 0.4  # X-axis velocity damping
-        y_vel_damping = 0.4  # Y-axis velocity damping
-        
-        # CRITICAL FIX: Use axis-specific gains for each coordinate to achieve circular trajectory
-        for i in range(2):  # Only process XY plane
-            error = pos_err[i]
-            
-            # Apply axis-specific proportional control
-            if error_magnitude < self.critical_error_threshold:
-                # Small error case: use axis-specific proportional control
-                gain = x_gain if i == 0 else y_gain
-                wrench[i] = gain * error
-            else:
-                # Large error case: use piecewise function with axis-specific gains
-                direction = pos_err[i] / (error_magnitude + 1e-6)  # Avoid division by zero
-                
-                error_excess = error_magnitude - self.critical_error_threshold
-                
-                # Different gains for each axis in the piecewise function
-                if i == 0:  # X-axis
-                    base_gain = 400.0      # Can remain the same or be slightly increased
-                    linear_gain = 900.0    # Consider increasing for faster response beyond 3cm
-                    cubic_gain = 22000.0   # Consider increasing for even faster response to large errors
-                else:  # Y-axis
-                    base_gain = 400.0      # Can remain the same or be slightly increased
-                    linear_gain = 900.0    # Consider increasing for faster response beyond 3cm
-                    cubic_gain = 22000.0   # Consider increasing for even faster response to large errors
-                     
-                force_magnitude = (base_gain * self.critical_error_threshold +
-                                linear_gain * error_excess +
-                                cubic_gain * error_excess**3)
-                
-                wrench[i] = force_magnitude * direction
-            
-            # Use axis-specific velocity damping
-            vel_damping = x_vel_damping if i == 0 else y_vel_damping
-            wrench[i] += vel_damping * vel_err[i]
-        
-        # Axis-specific maximum force limits
-        max_force_x = 40.0  # X-axis maximum force
-        max_force_y = 40.0  # Y-axis maximum force
-        
-        # Clamp wrench values to axis-specific maximum limits
-        for i in range(2):
-            max_force = max_force_x if i == 0 else max_force_y
-            if abs(wrench[i]) > max_force:
-                wrench[i] = math.copysign(max_force, wrench[i])
-                # Only print this debug info every 2 seconds
-                current_time = time.perf_counter() - self.start_time
-                if int(current_time) % 2 == 0 and current_time - int(current_time) < 0.1:
-                    axis_name = 'X' if i == 0 else 'Y'
-                    print(f"[DEBUG] {axis_name}-axis wrench clamped to max: {wrench[i]}N")
+            target_vel = np.asarray(getattr(self, "target_vel", np.zeros(3)), dtype=float)
+            target_acc = np.asarray(getattr(self, "target_acc", np.zeros(3)), dtype=float)
 
-        # Complete 6D wrench
-        wrench_full = [float(wrench[0]), float(wrench[1]), float(wrench[2]), 0.0, 0.0, 0.0]
+            K_raw = np.asarray(self.K, dtype=float)
+            D_raw = np.asarray(self.D, dtype=float)
+            M_raw = np.asarray(self.M, dtype=float)
+
+            f_ext = np.asarray(self.force_filt, dtype=float)
+
+            max_wrench_raw = np.asarray(getattr(self, "max_wrench", np.array([40.0, 40.0, 40.0])), dtype=float)
+
+        # -------- 2) Ensure matrices are 3x3 --------
+        def to_matrix(x):
+            x = np.asarray(x, dtype=float)
+            if x.ndim == 1 and x.size == 3:
+                return np.diag(x)
+            if x.shape == (3,):
+                return np.diag(x)
+            if x.shape == (3, 3):
+                return x
+            # Fallback: try to coerce
+            return np.diag(np.asarray(x).flatten()[:3])
+
+        K_mat = to_matrix(K_raw)
+        D_mat = to_matrix(D_raw)
+        M_mat = to_matrix(M_raw)
+
+        # -------- 3) Compute errors (3D) --------
+        target_pos = np.asarray(target_pos, dtype=float)
+        pos_err = target_pos - pos              # x_d - x
+        vel_err = target_vel - arm_vel          # v_d - v
+        acc_err = target_acc - arm_acc          # a_d - a
+
+        # -------- 4) Impedance formula --------
+        # F = M*(a_d - a) + D*(v_d - v) + K*(x_d - x)
+        wrench_xyz = M_mat.dot(acc_err) + D_mat.dot(vel_err) + K_mat.dot(pos_err) + f_ext
+
+        # -------- 5) On-demand scaling (optional, modest): reduce assistance when error tiny --------
+        # (keeps behavior gentle near target)
+        # err_xy = np.linalg.norm(pos_err[:2])
+        # if hasattr(self, "critical_error_threshold"):
+        #     thr = float(self.critical_error_threshold)
+        #     if err_xy < thr:
+        #         # scale down smoothly when inside threshold
+        #         scale = err_xy / (thr + 1e-9)  # in (0,1)
+        #         # don't zero-out completely — keep small stiffness for stability
+        #         min_scale = 0.15
+        #         scale = max(scale, min_scale)
+        #         wrench_xyz = wrench_xyz * scale
+
+        # -------- 6) Axis-wise limits (use self.max_wrench if provided) --------
+        # interpret max_wrench_raw as per-axis absolute limits for Fx,Fy,Fz
+        max_limits = np.asarray(max_wrench_raw, dtype=float)
+        # If only 2 entries given, assume Z limit = same as second or small
+        if max_limits.size == 2:
+            max_limits = np.array([max_limits[0], max_limits[1], 0.0])
+        if max_limits.size == 1:
+            max_limits = np.array([max_limits[0], max_limits[0], max_limits[0]])
+        if max_limits.size < 3:
+            tmp = np.zeros(3)
+            tmp[:max_limits.size] = max_limits
+            max_limits = tmp
+
+        # Clip by axis limits
+        for i in range(3):
+            wrench_xyz[i] = float(np.clip(wrench_xyz[i], -abs(max_limits[i]), abs(max_limits[i])))
         
-        # Only print wrench info every 2 seconds
-        current_time = time.perf_counter() - self.start_time
-        if int(current_time) % 2 == 0 and current_time - int(current_time) < 0.1:
-            print(f"[DEBUG] Sending wrench: {wrench_full}")
-        
+        # 限制z轴为0 
+        wrench_xyz[2] = 0.0
+
+        # -------- 7) Rate limiting: prevent large instant jumps in commanded force --------
+        # store last command in self.last_wrench (3) if exists
+        last_wrench = np.asarray(getattr(self, "last_wrench", np.zeros(3)), dtype=float)
+        # choose max rate (N per second) — conservative default
+        max_rate = getattr(self, "max_force_rate", 200.0)  # N/s (tunable)
+        max_step = max_rate * max(self.dt, 1e-6)
+        delta = wrench_xyz - last_wrench
+        # clip delta per-axis
+        delta_clipped = np.clip(delta, -max_step, max_step)
+        wrench_xyz = last_wrench + delta_clipped
+        # save back
+        self.last_wrench = wrench_xyz.copy()
+
+        # -------- 8) Build full 6D wrench and debug print every ~2s --------
+        wrench_full = [float(wrench_xyz[0]), float(wrench_xyz[1]), float(wrench_xyz[2]), 0.0, 0.0, 0.0]
+
+        if hasattr(self, "start_time") and self.start_time is not None:
+            current_time = time.perf_counter() - self.start_time
+            if int(current_time) % 2 == 0 and current_time - int(current_time) < 0.1:
+                print(f"[IMPED] t={current_time:.1f}s pos_err={pos_err}, vel_err={vel_err}, acc_err={acc_err}")
+                print(f"[IMPED] wrench_xyz={wrench_xyz.tolist()} (limits={max_limits.tolist()})")
+
         return wrench_full
     
     def control_loop(self):
@@ -609,26 +748,122 @@ class AdmittanceForceMode:
             )
             print("[INFO] Control loop stopped")
 
+    def control_loop_test(self,data_g2r_q, data_r2g_q, command_q):
+        """
+        Main control loop for rehabilitation robot with on-demand assistance
+        Critical fix: Improve timing and trajectory updates
+        """
+        self.running = True
+        next_tick = time.perf_counter()
+        self.start_time = time.perf_counter()
+        logger.info(f"Control loop started at {self.freq_hz} Hz")
+        logger.info(f"CIRCLE PARAMETERS: center={self.circle_center}, radius={self.circle_radius}m, frequency={self.circle_frequency}Hz")
+        
+        # Initialize with zero wrench
+        zero_wrench = [0, 0, 0, 0, 0, 0]
+        default_task_frame = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]  # 使用基础坐标系
 
-    def start(self):
+        # 确保机器人在开始时静止
+        print("[INFO] Initializing robot to standstill...")
+        self.send_force_mode_command(
+            wrench=zero_wrench,
+            selection_vector=self.selection_vector,
+            limits=self.wrench_limits,
+            task_frame=default_task_frame,
+            f_type=self.f_type
+        )
+        time.sleep(1.0)  # 等待机器人稳定
+
+        try:
+            loop_count = 0
+            while self.running:
+                # 关键修改：使用绝对时间而不是相对时间计算elapsed_time
+                current_time = time.perf_counter()
+                elapsed_time = current_time - self.start_time
+                
+                if not command_q.empty():
+                    command = command_q.get()
+                    logger.info('command_q: ', command)
+                    if isinstance(command, dict) and 'type' in command:
+                        if command['type']=='update_params':
+                            self.update_admittance_params(
+                                command['K'],
+                                command['D'],
+                                command['M']
+                                )
+                if not data_g2r_q.empty():
+                    data_g2r = data_g2r_q.get()
+                    self.update_desired_pose(data_g2r)
+
+                
+                
+                # 强制使用圆形轨迹模式，确保专注于轨迹跟踪
+                # self.trajectory_mode = "circle"
+                
+                # Compute target position on circular trajectory
+                target_pos = self.compute_target_position(elapsed_time)
+                
+                # Convert position error to wrench command
+                cmd_wrench = self.pos_error_to_wrench(target_pos)
+
+                # Send to robot
+                ok = self.send_force_mode_command(
+                    wrench=cmd_wrench,
+                    selection_vector=self.selection_vector,
+                    limits=self.wrench_limits,
+                    task_frame=default_task_frame,
+                    f_type=self.f_type
+                )
+                if not ok:
+                    print("[ERROR] Failed to send force_mode command - CRITICAL")
+
+                # Modified status update frequency to every 2 seconds
+                loop_count += 1
+                if loop_count % 250 == 0:  # Every 2 seconds (assuming 125Hz loop)
+                    current_pos = self.arm_pos.copy()
+                    pos_error = np.linalg.norm(target_pos - current_pos)
+                    distance_from_center = np.linalg.norm(current_pos[:2] - self.circle_center[:2])
+                    print(f"[STATUS] Running: {elapsed_time:.1f}s, Error: {pos_error:.3f}m, Distance from center: {distance_from_center:.3f}m")
+                    print(f"[STATUS] Target radius: {self.circle_radius}m, Center: {self.circle_center}")
+
+                # 关键修改：改进时间管理，确保循环频率
+                next_tick += self.dt
+                current_time = time.perf_counter()
+                if current_time < next_tick:
+                    time.sleep(next_tick - current_time)  # 使用非阻塞等待
+
+        finally:
+            # Safe shutdown
+            print("[INFO] Initiating safe shutdown...")
+            self.send_force_mode_command(
+                wrench=zero_wrench,
+                selection_vector=[0, 0, 0, 0, 0, 0],  # 关闭所有自由度
+                limits=[0.01]*6,
+                task_frame=default_task_frame,
+                f_type=self.f_type
+            )
+            print("[INFO] Control loop stopped")
+
+
+    def start(self,data_g2r_q, data_r2g_q, command_q):
         if self.running:
-            print("[INFO] Already running")
+            logger.warning("Control Loop Already running")
             return
         # Start thread
-        self.thread = threading.Thread(target=self.control_loop, daemon=True)
+        self.thread = threading.Thread(target=self.control_loop_test, args=(data_g2r_q, data_r2g_q, command_q), daemon=True)
         self.thread.start()
-        print("[INFO] Control started in separate thread")
+        logger.info(" Control started in separate thread")
 
     def stop(self):
         """Stop the admittance control and release all resources"""
-        print("[AdmittanceForceMode] Stopping control...")
+        logger.info("Stopping control...")
         self.running = False
         
         # Wait for control thread to finish
         if hasattr(self, 'thread') and self.thread.is_alive():
             self.thread.join(timeout=2.0)
             if self.thread.is_alive():
-                print("[AdmittanceForceMode] Warning: Control thread did not terminate gracefully")
+                logger.warning("Control thread did not terminate gracefully")
         
         # Ensure robot returns to safe state
         try:
@@ -674,9 +909,11 @@ class AdmittanceForceMode:
         print("[AdmittanceForceMode] All resources released")
 
     # utility APIs to update params safely
-    def update_desired_pose(self, pose6):
+    def update_desired_pose(self, pose2):
         with self.lock:
-            self.desired_pose = np.array(pose6, dtype=float)
+            self.last_target_pos = self.desired_pose[:3]
+            self.desired_pose[0] = pose2[0]
+            self.desired_pose[1] = pose2[1]
 
     def update_admittance_params(self, M=None, D=None, K=None):
         with self.lock:
