@@ -131,14 +131,8 @@ public class ZmqManager : MonoBehaviour
         }
     }
 
-    void Update()
+    void FixedUpdate()
     {
-        // 处理所有消息接收
-        if (_isReceiverInitialized)
-        {
-            ProcessAllMessages();
-        }
-
         // 处理副目标位置发布
         if (_isPublisherInitialized && _isPublisherRunning)
         {
@@ -152,6 +146,16 @@ public class ZmqManager : MonoBehaviour
             Vector2 secondaryPos = new Vector2(secX, secY);
             PublishSecondaryPosition(secondaryPos);
         }
+    }
+    void Update()
+    {
+        // 处理所有消息接收
+        if (_isReceiverInitialized)
+        {
+            ProcessAllMessages();
+        }
+
+        
         
         // 平滑更新 Metrics 量条
         SmoothUpdateMetricsBars();

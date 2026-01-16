@@ -110,9 +110,12 @@ public class TargetControl : MonoBehaviour
         }
     }
 
-    // 初始化位置但不开始运动
     private void InitializePosition()
     {
+        // 重置角度变量
+        angle = 0f;
+        speedChangePhase = 0f;
+        
         // 设置初始位置（角度为0时的位置）
         float x = radius;
         float y = 0f;
@@ -126,20 +129,80 @@ public class TargetControl : MonoBehaviour
             secondaryObject.transform.position = new Vector3(secX, secY, secondaryObject.transform.position.z);
         }
         
-        // 启动副物体闪烁协程
-        secondaryObjectBlinkCoroutine = StartCoroutine(SecondaryObjectBlink());
+        // 如果副物体闪烁协程不存在，启动
+        if (secondaryObjectBlinkCoroutine == null)
+        {
+            // StopCoroutine(secondaryObjectBlinkCoroutine);
+            secondaryObjectBlinkCoroutine = StartCoroutine(SecondaryObjectBlink());
+        }
         
-        // 启动半径变化协程（但是否实际触发变化取决于enableRadiusChange）
-        radiusChangeCoroutine = StartCoroutine(AutoRadiusChange());
+        // 如果半径变化协程不存在，启动
+        if (radiusChangeCoroutine == null)
+        {
+            // StopCoroutine(radiusChangeCoroutine);
+            radiusChangeCoroutine = StartCoroutine(AutoRadiusChange());
+        }
     }
+
+    private void StopMove()
+    {
+        if (isMovementStarted)
+        {
+            isMovementStarted = false;
+        }
+        if (secondaryObjectBlinkCoroutine != null)
+        {
+            StopCoroutine(secondaryObjectBlinkCoroutine);
+        }
+        if (radiusChangeCoroutine != null)
+        {
+            StopCoroutine(radiusChangeCoroutine);
+        }
+    }
+
+    private void StartMove()
+    {
+        if (!isMovementStarted)
+        {
+            isMovementStarted = true;
+            // Debug.Log("开始运动");
+        }
+        if (secondaryObjectBlinkCoroutine != null)
+        {
+            // StopCoroutine(secondaryObjectBlinkCoroutine);
+            secondaryObjectBlinkCoroutine = StartCoroutine(SecondaryObjectBlink());
+        }
+        
+        
+        if (radiusChangeCoroutine == null)
+        {
+            // StopCoroutine(radiusChangeCoroutine);
+            radiusChangeCoroutine = StartCoroutine(AutoRadiusChange());
+        }
+
+    }
+
+    
 
     // 阶段变化事件处理
     private void OnStageChanged(string stageName)
     {
         if (stageName == "nAnM" && !isMovementStarted)
         {
-            isMovementStarted = true;
+            StartMove();
             Debug.Log("收到nAnM阶段信号，开始运动");
+        }
+        if (stageName == "FINISH" && isMovementStarted)
+        {
+            // isMovementStarted = false;
+            StopMove();
+            Debug.Log("收到FINISH阶段信号，停止运动");
+        }
+        if (stageName == "IDLE")
+        {
+            // isMovementStarted = false;
+            Debug.Log("收到IDLE阶段信号，复位到初始位置");
+            InitializePosition();
         }
     }
 

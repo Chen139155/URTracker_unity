@@ -18,7 +18,7 @@ import math
 import threading
 import numpy as np
 import logging
-
+import queue
 # ensure URBasic package is importable; adapt path if needed
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(current_dir)
@@ -98,12 +98,12 @@ class KalmanFilter:
 class AdmittanceForceMode:
     def __init__(self, 
                  ur_host='10.168.2.209',
-                 freq_hz=125,
+                 freq_hz=50,
                  desired_pose=None,
                  # Safety parameters for rehabilitation robot
-                 adm_M=np.array([50.0, 50.0, 50.0]),      # Larger mass for smooth motion
-                 adm_D=np.array([20.0, 20.0, 20.0]),      # Appropriate damping
-                 adm_K=np.array([5.0, 5.0, 5.0]),         # Lower stiffness
+                 adm_M=np.array([250.0, 250.0, 250.0]),      # Larger mass for smooth motion
+                 adm_D=np.array([80.0, 80.0, 80.0]),      # Appropriate damping
+                 adm_K=np.array([40.0, 40.0, 40.0]),         # Lower stiffness
                  force_gain_pos=np.array([10.0, 10.0, 0.0]),  # Base position gain
                  force_gain_vel=np.array([2.0, 2.0, 0.0]),    # Base velocity gain
                  max_wrench=np.array([15.0, 15.0, 0.0]),     # Safe maximum force limit
@@ -197,17 +197,48 @@ class AdmittanceForceMode:
         # UR connection objects
         self.robotModel = URBasic.robotModel.RobotModel()
         self.UR = URBasic.urScriptExt.UrScriptExt(host=self.ur_host, robotModel=self.robotModel)
-        
-        # Ensure robot is up
+
+        # 检查机器人连接状态
+        try:
+            # 尝试获取机器人状态，验证连接
+            self.UR.get_actual_tcp_pose()
+            print("[INFO] Robot connection established successfully")
+        except Exception as e:
+            print(f"[CRITICAL] Failed to establish robot connection: {e}")
+            # 可以选择抛出异常或继续运行
+            # raise RuntimeError(f"Failed to connect to robot at {self.ur_host}") from e
+
         try:
             self.UR.reset_error()
-        except Exception:
-            # Ignore here; user will see exceptions when running
-            pass
+            print("[INFO] Robot errors reset successfully")
+        except Exception as e:
+            print(f"[WARNING] Failed to reset robot errors: {e}")
+
+        # Check robot state before initializing force mode
+        try:
+            robot_state = self.get_state()
+            print(f"[DEBUG] Robot state before force mode init: {robot_state}")
+        except Exception as e:
+            print(f"[DEBUG] Failed to get robot state: {e}")
+
+        # Initialize robot-side force_mode program with enhanced error handling
+        logger.info("[AdmittanceForceMode] Initializing force mode...")
+        try:
+            self.UR.init_force_remote(task_frame=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0], f_type=self.f_type)
+            print("[INFO] Force mode initialized successfully")
+        except Exception as e:
+            print(f"[ERROR] Failed to initialize force mode: {e}")
+            print("[DEBUG] Checking if robot is in correct state for force mode...")
+            # Try to get more detailed error information
+            try:
+                program_running = self.UR.get_program_running()
+                print(f"[DEBUG] Program running: {program_running}")
+            except Exception as ex:
+                print(f"[DEBUG] Failed to check program state: {ex}")
 
         # Initialize robot-side force_mode program
-        logger.info("[AdmittanceForceMode] Initializing force mode...")
-        self.UR.init_force_remote(task_frame=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0], f_type=self.f_type)
+        # logger.info("[AdmittanceForceMode] Initializing force mode...")
+        # self.UR.init_force_remote(task_frame=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0], f_type=self.f_type)
 
         # Now we can safely call get_state() since filters are initialized
         self.get_state()
@@ -256,6 +287,8 @@ class AdmittanceForceMode:
         self.in_admittance_mode = False
         self.current_angle = 0.0  # For debugging, track current angle
 
+
+    
     # small helper to call URBasic's set_force_remote safely
     def send_force_mode_command(self, wrench, selection_vector=None, limits=None, task_frame=None, f_type=None):
         if selection_vector is None:
@@ -356,19 +389,61 @@ class AdmittanceForceMode:
 
     def get_state(self):
         """
-        Read UR pose & velocity via URBasic functions (blocking calls)
-        关键方法：通过URBasic库获取机器人的实际TCP位姿和速度
+        Read UR pose & velocity via URBasic functions with timeout protection
+        获取机器人位姿、速度和力传感器数据，并使用卡尔曼滤波平滑
         """
-        try:
-            # 关键修改：确保使用正确的方法获取机器人状态
-            pose = np.asarray(self.UR.get_actual_tcp_pose(), dtype=float)
-            vel = np.asarray(self.UR.get_actual_tcp_speed(), dtype=float)
-        except Exception as e:
-            print(f"Get state error: {e}")
-            # fallback to last known values
+        import threading
+        import time
+        
+        # 线程结果容器
+        thread_result = {'pose': None, 'vel': None, 'force': None, 'error': None}
+        
+        def get_robot_data_thread():
+            """获取机器人数据的内部函数，用于设置超时"""
+            try:
+                # 获取机器人位姿和速度
+                pose = np.asarray(self.UR.get_actual_tcp_pose(), dtype=float)
+                vel = np.asarray(self.UR.get_actual_tcp_speed(), dtype=float)
+                
+                # 获取力传感器数据
+                # 注意：需要根据实际力传感器接口调整这行代码
+                # 这里假设使用类似hex.udp_get()的方式获取力数据
+                # 如果使用不同的力传感器，需要替换为正确的获取方法
+                try:
+                    force_data = np.asarray(hex.udp_get(), dtype=float)  # fx,fy,fz,tx,ty,tz
+                    force = force_data[0:3]  # 只使用力分量
+                except Exception as force_e:
+                    print(f"[DEBUG] Force sensor read error: {force_e}")
+                    force = np.zeros(3)  # 力传感器读取失败时使用零值
+                
+                thread_result['pose'] = pose
+                thread_result['vel'] = vel
+                thread_result['force'] = force
+                thread_result['error'] = None
+            except Exception as e:
+                thread_result['error'] = e
+                thread_result['pose'] = None
+                thread_result['vel'] = None
+                thread_result['force'] = None
+        
+        # 设置1秒超时
+        thread = threading.Thread(target=get_robot_data_thread)
+        thread.daemon = True
+        thread.start()
+        thread.join(timeout=1.0)
+        
+        # 检查线程执行结果
+        if thread.is_alive() or thread_result['error'] is not None:
+            print(f"[ERROR] get_state() timeout or error: {thread_result['error']}")
+            # 使用上次的值作为回退
             pose = self.arm_pose.copy()
             vel = self.arm_vel.copy()
-
+            force = self.force_raw.copy() if hasattr(self, 'force_raw') else np.zeros(3)
+        else:
+            pose = thread_result['pose']
+            vel = thread_result['vel']
+            force = thread_result['force']
+        
         # 使用卡尔曼滤波器平滑位姿
         measurement = pose[:3]  # 只使用位置信息
         self.tcp_kalman_filter.predict(dt=self.dt)
@@ -378,13 +453,35 @@ class AdmittanceForceMode:
         filtered_pose = self.tcp_kalman_filter.state[:3]
         filtered_vel = self.tcp_kalman_filter.state[3:]
         
+        # 偏差补偿和死区处理
+        if hasattr(self, 'bias_x') and hasattr(self, 'bias_y'):
+            force[0] += self.bias_x
+            force[1] += self.bias_y
+        
+        # 死区处理
+        DEADZONE_THRESHOLD = 0.5  # 根据实际情况调整
+        for i in range(2):  # 只处理x和y方向
+            if abs(force[i]) < DEADZONE_THRESHOLD:
+                force[i] = 0.0
+        
+        # 平滑力数据
+        self.force_kalman_filter.predict(dt=self.dt)
+        self.force_kalman_filter.update(force)
+        force_filt = self.force_kalman_filter.state
+        
+        # 使用锁保护共享数据
         with self.lock:
+            # 更新机器人状态
             self.arm_pose[:3] = filtered_pose
             self.arm_pose[3:] = pose[3:] 
             self.arm_pos = filtered_pose.copy()
             self.last_arm_vel[:3] = self.arm_vel[:3]
             self.arm_vel[:3] = filtered_vel
             self.arm_vel[3:] = vel[3:]
+            
+            # 更新力传感器数据
+            self.force_raw = force.copy()
+            self.force_filt = force_filt.copy()
 
     def get_circle_trajectory(self, t):
         """
@@ -458,100 +555,6 @@ class AdmittanceForceMode:
         
         return target_pos
 
-    # def pos_error_to_wrench(self, target_pos):
-    #     """
-    #     Convert position error to wrench commands using on-demand assistance strategy
-    #     """
-    #     # Debug: Track position error for XY axes separately
-    #     with self.lock:
-    #         pos = self.arm_pos.copy()
-    #         arm_vel = self.arm_vel[0:3].copy()
-    #         target_vel = self.target_vel.copy()
-    #         arm_acc = self.arm_acc.copy()
-    #         target_acc = self.target_acc.copy()
-    #         K = self.K.copy()
-    #         D = self.D.copy()
-    #         M = self.M.copy()
-
-            
-
-    #     # Calculate position errors vector
-    #     pos_err = target_pos - pos
-    #     vel_err = target_vel - arm_vel
-    #     acc_err = target_acc - arm_acc
-        
-    #     # Calculate error magnitude
-    #     error_magnitude = np.linalg.norm(pos_err[:2])
-        
-    #     # Initialize wrench
-    #     wrench = np.zeros(3)
-        
-    #     # Axis-specific control gains to address elliptical trajectory
-    #     # Different gains for X and Y axes to compensate for mechanical differences
-    #     x_gain = 200.0  # X-axis proportional gain
-    #     y_gain = 250.0  # Y-axis proportional gain (higher to compensate if needed)
-    #     x_vel_damping = 0.4  # X-axis velocity damping
-    #     y_vel_damping = 0.4  # Y-axis velocity damping
-        
-    #     # CRITICAL FIX: Use axis-specific gains for each coordinate to achieve circular trajectory
-    #     for i in range(2):  # Only process XY plane
-    #         error = pos_err[i]
-            
-    #         # Apply axis-specific proportional control
-    #         if error_magnitude < self.critical_error_threshold:
-    #             # Small error case: use axis-specific proportional control
-    #             gain = x_gain if i == 0 else y_gain
-    #             wrench[i] = gain * error
-    #         else:
-    #             # Large error case: use piecewise function with axis-specific gains
-    #             direction = pos_err[i] / (error_magnitude + 1e-6)  # Avoid division by zero
-                
-    #             error_excess = error_magnitude - self.critical_error_threshold
-                
-    #             # Different gains for each axis in the piecewise function
-    #             if i == 0:  # X-axis
-    #                 base_gain = 400.0      # Can remain the same or be slightly increased
-    #                 linear_gain = 900.0    # Consider increasing for faster response beyond 3cm
-    #                 cubic_gain = 22000.0   # Consider increasing for even faster response to large errors
-    #             else:  # Y-axis
-    #                 base_gain = 400.0      # Can remain the same or be slightly increased
-    #                 linear_gain = 900.0    # Consider increasing for faster response beyond 3cm
-    #                 cubic_gain = 22000.0   # Consider increasing for even faster response to large errors
-                     
-    #             force_magnitude = (base_gain * self.critical_error_threshold +
-    #                             linear_gain * error_excess +
-    #                             cubic_gain * error_excess**3)
-                
-    #             wrench[i] = force_magnitude * direction
-            
-    #         # Use axis-specific velocity damping
-    #         vel_damping = x_vel_damping if i == 0 else y_vel_damping
-    #         wrench[i] += vel_damping * vel_err[i]
-        
-    #     # Axis-specific maximum force limits
-    #     max_force_x = 40.0  # X-axis maximum force
-    #     max_force_y = 40.0  # Y-axis maximum force
-        
-    #     # Clamp wrench values to axis-specific maximum limits
-    #     for i in range(2):
-    #         max_force = max_force_x if i == 0 else max_force_y
-    #         if abs(wrench[i]) > max_force:
-    #             wrench[i] = math.copysign(max_force, wrench[i])
-    #             # Only print this debug info every 2 seconds
-    #             current_time = time.perf_counter() - self.start_time
-    #             if int(current_time) % 2 == 0 and current_time - int(current_time) < 0.1:
-    #                 axis_name = 'X' if i == 0 else 'Y'
-    #                 print(f"[DEBUG] {axis_name}-axis wrench clamped to max: {wrench[i]}N")
-
-    #     # Complete 6D wrench
-    #     wrench_full = [float(wrench[0]), float(wrench[1]), float(wrench[2]), 0.0, 0.0, 0.0]
-        
-    #     # Only print wrench info every 2 seconds
-    #     current_time = time.perf_counter() - self.start_time
-    #     if int(current_time) % 2 == 0 and current_time - int(current_time) < 0.1:
-    #         print(f"[DEBUG] Sending wrench: {wrench_full}")
-        
-    #     return wrench_full
     def pos_error_to_wrench(self, target_pos):
         """
         Impedance/admittance style controller:
@@ -606,7 +609,7 @@ class AdmittanceForceMode:
 
         # -------- 4) Impedance formula --------
         # F = M*(a_d - a) + D*(v_d - v) + K*(x_d - x)
-        wrench_xyz = M_mat.dot(acc_err) + D_mat.dot(vel_err) + K_mat.dot(pos_err) + f_ext
+        wrench_xyz = M_mat.dot(acc_err) + D_mat.dot(vel_err) + K_mat.dot(pos_err) #+ f_ext #TODO: if we need to add f_ext?
 
         # -------- 5) On-demand scaling (optional, modest): reduce assistance when error tiny --------
         # (keeps behavior gentle near target)
@@ -638,6 +641,19 @@ class AdmittanceForceMode:
         for i in range(3):
             wrench_xyz[i] = float(np.clip(wrench_xyz[i], -abs(max_limits[i]), abs(max_limits[i])))
         
+        # -------- NEW: Minimum force limit (2N) --------
+        # Calculate the magnitude of the force vector
+        force_magnitude = np.linalg.norm(wrench_xyz)
+        # Minimum force threshold (2N)
+        min_force_a = 1.5
+        min_force_b = 0.1
+
+        if force_magnitude > min_force_b and force_magnitude < min_force_a:
+            # Calculate the direction vector (normalized)
+            force_direction = wrench_xyz / force_magnitude
+            # Apply minimum force while preserving direction
+            wrench_xyz = force_direction * min_force_a
+
         # 限制z轴为0 
         wrench_xyz[2] = 0.0
 
@@ -657,11 +673,11 @@ class AdmittanceForceMode:
         # -------- 8) Build full 6D wrench and debug print every ~2s --------
         wrench_full = [float(wrench_xyz[0]), float(wrench_xyz[1]), float(wrench_xyz[2]), 0.0, 0.0, 0.0]
 
-        if hasattr(self, "start_time") and self.start_time is not None:
-            current_time = time.perf_counter() - self.start_time
-            if int(current_time) % 2 == 0 and current_time - int(current_time) < 0.1:
-                print(f"[IMPED] t={current_time:.1f}s pos_err={pos_err}, vel_err={vel_err}, acc_err={acc_err}")
-                print(f"[IMPED] wrench_xyz={wrench_xyz.tolist()} (limits={max_limits.tolist()})")
+        # if hasattr(self, "start_time") and self.start_time is not None:
+        #     current_time = time.perf_counter() - self.start_time
+            # if int(current_time) % 2 == 0 and current_time - int(current_time) < 0.1:
+                # print(f"[IMPED] t={current_time:.1f}s pos_err={pos_err}, vel_err={vel_err}, acc_err={acc_err}")
+                # print(f"[IMPED] wrench_xyz={wrench_xyz.tolist()} (limits={max_limits.tolist()})")
 
         return wrench_full
     
@@ -722,13 +738,13 @@ class AdmittanceForceMode:
                     print("[ERROR] Failed to send force_mode command - CRITICAL")
 
                 # Modified status update frequency to every 2 seconds
-                loop_count += 1
-                if loop_count % 250 == 0:  # Every 2 seconds (assuming 125Hz loop)
-                    current_pos = self.arm_pos.copy()
-                    pos_error = np.linalg.norm(target_pos - current_pos)
-                    distance_from_center = np.linalg.norm(current_pos[:2] - self.circle_center[:2])
-                    print(f"[STATUS] Running: {elapsed_time:.1f}s, Error: {pos_error:.3f}m, Distance from center: {distance_from_center:.3f}m")
-                    print(f"[STATUS] Target radius: {self.circle_radius}m, Center: {self.circle_center}")
+                # loop_count += 1
+                # if loop_count % 250 == 0:  # Every 2 seconds (assuming 125Hz loop)
+                #     current_pos = self.arm_pos.copy()
+                #     pos_error = np.linalg.norm(target_pos - current_pos)
+                #     distance_from_center = np.linalg.norm(current_pos[:2] - self.circle_center[:2])
+                #     print(f"[STATUS] Running: {elapsed_time:.1f}s, Error: {pos_error:.3f}m, Distance from center: {distance_from_center:.3f}m")
+                #     print(f"[STATUS] Target radius: {self.circle_radius}m, Center: {self.circle_center}")
 
                 # 关键修改：改进时间管理，确保循环频率
                 next_tick += self.dt
@@ -781,27 +797,40 @@ class AdmittanceForceMode:
                 current_time = time.perf_counter()
                 elapsed_time = current_time - self.start_time
                 
+                self.get_state()
+
                 if not command_q.empty():
                     command = command_q.get()
                     logger.info('command_q: ', command)
-                    if isinstance(command, dict) and 'type' in command:
+                    # 处理字符串命令
+                    if isinstance(command, str):
+                        if command == 'quit':
+                            self.running = False
+                            break
+                        elif command == 'mode1':
+                            self.update_mode(1)
+                        elif command == 'mode2':
+                            self.update_mode(2)
+                        elif command == 'mode3':
+                            self.update_mode(3)
+                        elif command == 'stop':
+                            continue
+                    # 处理字典命令（参数更新）
+                    elif isinstance(command, dict) and 'type' in command:
                         if command['type']=='update_params':
                             self.update_admittance_params(
-                                command['K'],
-                                command['D'],
-                                command['M']
+                                M=command['M'],
+                                D=command['D'],
+                                K=command['K']
                                 )
+                            print(f"[INFO] Updated admittance params: M={command['M']}, D={command['D']}, K={command['K']}")
                 if not data_g2r_q.empty():
                     data_g2r = data_g2r_q.get()
                     self.update_desired_pose(data_g2r)
-
                 
-                
-                # 强制使用圆形轨迹模式，确保专注于轨迹跟踪
-                # self.trajectory_mode = "circle"
-                
-                # Compute target position on circular trajectory
-                target_pos = self.compute_target_position(elapsed_time)
+                # get target position 
+                target_pos = self.desired_pose[:3]
+                # print(f"[STATUS] Target position: {target_pos}")
                 
                 # Convert position error to wrench command
                 cmd_wrench = self.pos_error_to_wrench(target_pos)
@@ -817,14 +846,45 @@ class AdmittanceForceMode:
                 if not ok:
                     print("[ERROR] Failed to send force_mode command - CRITICAL")
 
+                data = {
+                    'time': time.time(),
+                    'Hex_x': self.force_raw[0],
+                    'Hex_y': self.force_raw[1],
+                    'Hex_z': self.force_raw[2],
+                    'force_norm': np.linalg.norm(self.force_raw),
+                    'linear_x': self.arm_vel[0],
+                    'linear_y': self.arm_vel[1],
+                    'linear_z': self.arm_vel[2],
+                    'pose_x': self.arm_pose[0],
+                    'pose_y': self.arm_pose[1],
+                    'pose_z': self.arm_pose[2],
+                    'pose_rx': self.arm_pose[3],
+                    'pose_ry': self.arm_pose[4],
+                    'pose_rz': self.arm_pose[5]
+                }
+                # print(f"[DEBUG] Sending data to queue - pose: {data['pose_x']}, {data['pose_y']}")
+            
+                try:
+                    # 非阻塞方式发送数据，如果队列已满则等待10ms
+                    data_r2g_q.put(data, block=True, timeout=0.01)
+                    # print(f"[DEBUG] Data sent successfully - queue size: {data_r2g_q.qsize()}")
+                except queue.Full:
+                    # 如果队列已满，尝试移除旧数据并添加新数据
+                    try:
+                        data_r2g_q.get(block=False)  # 移除旧数据
+                        data_r2g_q.put(data, block=False)  # 添加新数据
+                        # print(f"[DEBUG] Queue full - removed old data and added new data")
+                    except:
+                        print(f"[ERROR] Failed to send data even after removing old data")
+
                 # Modified status update frequency to every 2 seconds
-                loop_count += 1
-                if loop_count % 250 == 0:  # Every 2 seconds (assuming 125Hz loop)
-                    current_pos = self.arm_pos.copy()
-                    pos_error = np.linalg.norm(target_pos - current_pos)
-                    distance_from_center = np.linalg.norm(current_pos[:2] - self.circle_center[:2])
-                    print(f"[STATUS] Running: {elapsed_time:.1f}s, Error: {pos_error:.3f}m, Distance from center: {distance_from_center:.3f}m")
-                    print(f"[STATUS] Target radius: {self.circle_radius}m, Center: {self.circle_center}")
+                # loop_count += 1
+                # if loop_count % 250 == 0:  # Every 2 seconds (assuming 125Hz loop)
+                #     current_pos = self.arm_pos.copy()
+                #     pos_error = np.linalg.norm(target_pos - current_pos)
+                #     distance_from_center = np.linalg.norm(current_pos[:2] - self.circle_center[:2])
+                #     print(f"[STATUS] Running: {elapsed_time:.1f}s, Error: {pos_error:.3f}m, Distance from center: {distance_from_center:.3f}m")
+                #     print(f"[STATUS] Target radius: {self.circle_radius}m, Center: {self.circle_center}")
 
                 # 关键修改：改进时间管理，确保循环频率
                 next_tick += self.dt
@@ -844,6 +904,22 @@ class AdmittanceForceMode:
             )
             print("[INFO] Control loop stopped")
 
+    def update_mode(self, modetype:int):
+        '''直接控制切换模式，与cc_admittance_2022.py保持一致'''
+        with self.lock:
+            if modetype == 1:
+                self.K = np.array([5, 5, 5])
+                self.D = np.array([80, 80, 80])
+                self.M = np.array([1, 1, 1])
+            elif modetype == 2:
+                self.K = np.array([250, 250, 250])
+                self.D = np.array([80, 80, 80])
+                self.M = np.array([40, 40, 40])
+            elif modetype == 3:
+                self.K = np.array([400, 400, 400])
+                self.D = np.array([80, 80, 80])
+                self.M = np.array([40, 40, 40])
+            print(f"[DEBUG] Updated control mode to {modetype}: K={self.K}, D={self.D}, M={self.M}")
 
     def start(self,data_g2r_q, data_r2g_q, command_q):
         if self.running:
@@ -971,7 +1047,15 @@ if __name__ == '__main__':
             circle_frequency=0.10)  # 较低的频率，确保运动缓慢
 
     try:
-        adm.start()
+        import queue
+        data_g2r_q = queue.Queue(maxsize=10)
+        data_r2g_q = queue.Queue(maxsize=10)
+        command_q = queue.Queue(maxsize=10)
+        
+        # 向g2r队列中放入初始目标位置
+        initial_target = [0.625, -0.05, 0.400, 0.0, math.pi, 0.0]
+        data_g2r_q.put(initial_target, block=False)
+        adm.start(data_g2r_q, data_r2g_q, command_q)
         print("\n[INFO] Rehabilitation robot control started. Running in circle trajectory mode.")
         print("Press Ctrl+C to stop...\n")
         while True:
